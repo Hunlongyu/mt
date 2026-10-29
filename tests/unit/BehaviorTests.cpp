@@ -356,6 +356,9 @@ class BehaviorTests final : public QObject {
         old.captured = QDateTime::fromMSecsSinceEpoch(1000);
         ClipboardRecord recent;
         recent.text = QStringLiteral("recent");
+        // Moving a record must still work if the wall clock has moved backwards.
+        // This also reproduces a tied clock tick without relying on sleeps.
+        recent.captured = QDateTime::currentDateTimeUtc().addSecs(60);
         QVERIFY(store.capture(old, 10));
         QVERIFY(store.capture(recent, 10));
         auto rows = store.records();

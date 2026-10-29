@@ -27,6 +27,7 @@
 #include <QPushButton>
 #include <QScrollBar>
 #include <QScrollArea>
+#include <QScreen>
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QStackedWidget>
@@ -60,6 +61,13 @@ class WidgetTests final : public QObject {
         image.fill(Qt::transparent);
         widget.render(&image);
         return image;
+    }
+    static bool nativeCornersAvailable() {
+        QWidget probe;
+        DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_DEFAULT;
+        return SUCCEEDED(DwmGetWindowAttribute(reinterpret_cast<HWND>(probe.winId()),
+                                               DWMWA_WINDOW_CORNER_PREFERENCE,
+                                               &corner, sizeof(corner)));
     }
     static bool systemMenuFrame(QMenu& menu) {
         const auto hwnd = reinterpret_cast<HWND>(menu.internalWinId());
@@ -116,6 +124,8 @@ class WidgetTests final : public QObject {
     }
   private Q_SLOTS:
     void panelsUseTheSystemShadowAndCorners() {
+        if (!nativeCornersAvailable())
+            QSKIP("Windows 11 DWM corner API is unavailable on this host.");
         Theme theme;
         QTemporaryDir dir;
         LauncherService service(dir.filePath(QStringLiteral("launcher.json")));
@@ -155,6 +165,7 @@ class WidgetTests final : public QObject {
         }
     }
     void menusKeepKeyboardActionsAndUseSystemFrames() {
+        const bool corners = nativeCornersAvailable();
         Theme theme;
         for (const auto& mode : {QStringLiteral("dark"), QStringLiteral("light")}) {
             theme.apply(mode);
@@ -170,7 +181,7 @@ class WidgetTests final : public QObject {
             menu.popup({30, 30});
             QApplication::processEvents();
             QVERIFY(QTest::qWaitFor([&] { return menu.windowOpacity() == 1; }));
-            QVERIFY(systemMenuFrame(menu));
+            if (corners) QVERIFY(systemMenuFrame(menu));
             QCOMPARE(menu.pos(), QPoint(30, 30));
             QVERIFY(menu.mask().isEmpty());
             QCOMPARE(menu.actionGeometry(first).height(), 30);
@@ -212,7 +223,7 @@ class WidgetTests final : public QObject {
             menu.popup({30, 30});
             QApplication::processEvents();
             QVERIFY(QTest::qWaitFor([&] { return menu.isVisible() && menu.windowOpacity() == 1; }));
-            QVERIFY(systemMenuFrame(menu));
+            if (corners) QVERIFY(systemMenuFrame(menu));
             QTest::keyClick(&menu, Qt::Key_Escape);
             QVERIFY(!menu.isVisible());
             QCOMPARE(triggered.size(), 1);
@@ -223,11 +234,12 @@ class WidgetTests final : public QObject {
             editorMenu->popup({30, 30});
             QApplication::processEvents();
             QVERIFY(QTest::qWaitFor([&] { return editorMenu->windowOpacity() == 1; }));
-            QVERIFY(systemMenuFrame(*editorMenu));
+            if (corners) QVERIFY(systemMenuFrame(*editorMenu));
             editorMenu->hide();
         }
     }
     void contextAndToolbarMenusUseTheSameSystemFrame() {
+        const bool corners = nativeCornersAvailable();
         Theme theme;
         QTemporaryDir dir;
         LauncherService service(dir.filePath(QStringLiteral("launcher.json")));
@@ -261,7 +273,7 @@ class WidgetTests final : public QObject {
                         [&] { return !menu || !menu->isVisible() || menu->windowOpacity() == 1; });
                     if (!menu || !menu->isVisible())
                         return;
-                    framed = opaque && systemMenuFrame(*menu);
+                    framed = opaque && (!corners || systemMenuFrame(*menu));
                     compact = true;
                     for (auto* action : menu->actions()) {
                         if (action->isSeparator())
@@ -288,6 +300,9 @@ class WidgetTests final : public QObject {
                 QVERIFY2(framed, qPrintable(name));
                 QVERIFY2(compact, qPrintable(name));
                 QVERIFY(!labels.isEmpty());
+                // Let Qt release the popup grab before opening another unrelated menu.
+                QTRY_VERIFY_WITH_TIMEOUT(!QApplication::activePopupWidget(), 2000);
+                QTest::qWait(400);
                 if (name == QStringLiteral("clipboard-context")) {
                     QCOMPARE(labels.size(), 7);
                     QVERIFY(labels.contains(QStringLiteral("回贴")));
@@ -967,7 +982,7 @@ class WidgetTests final : public QObject {
             lines << QStringLiteral("line %1").arg(i);
         body.text = lines.join(u'\n');
         panel.setRecords({link, body});
-        panel.showNear({700, 60}, false);
+        panel.showNear(QGuiApplication::primaryScreen()->availableGeometry().topLeft() + QPoint(20, 60), false);
         QSignalSpy previews(&panel, &ClipboardPanel::previewRequested);
         QSignalSpy opens(&panel, &ClipboardPanel::openRequested);
         auto* viewport = panel.findChild<QListView*>()->viewport();

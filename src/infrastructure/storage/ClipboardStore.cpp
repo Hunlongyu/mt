@@ -142,7 +142,10 @@ std::expected<int, QString> ClipboardStore::importStream(const ClipProducer& pro
 }
 std::expected<void, QString> ClipboardStore::touch(const QString& id) {
     QSqlQuery q(db_);
-    q.prepare(QStringLiteral("UPDATE clips SET captured=? WHERE id=?"));
+    // Windows clocks can repeat a millisecond (or move backwards). A confirmed
+    // record must sort above existing ordinary history even in that case.
+    q.prepare(QStringLiteral("UPDATE clips SET captured=MAX(?, "
+                             "COALESCE((SELECT MAX(captured) FROM clips), 0)+1) WHERE id=?"));
     q.addBindValue(QDateTime::currentMSecsSinceEpoch());
     q.addBindValue(id);
     if (!q.exec())
