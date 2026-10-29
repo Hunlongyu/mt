@@ -131,8 +131,11 @@ if(BUILD_TESTING)
     set_target_properties(mt_widget_tests PROPERTIES WIN32_EXECUTABLE FALSE)
     qt_add_resources(mt_widget_tests widget_test_theme PREFIX "/mt" BASE resources/theme FILES resources/theme/theme.json)
     qt_import_plugins(mt_widget_tests NO_DEFAULT)
-    add_test(NAME widget_contracts COMMAND mt_widget_tests -o "${CMAKE_CURRENT_BINARY_DIR}/test-results/widgets.txt,txt" -o "${CMAKE_CURRENT_BINARY_DIR}/test-results/widgets.xml,junitxml")
-    set_tests_properties(behavior_contracts widget_contracts PROPERTIES TIMEOUT 30)
+    add_test(NAME widget_contracts COMMAND mt_widget_tests -v1 -o "${CMAKE_CURRENT_BINARY_DIR}/test-results/widgets.txt,txt" -o "${CMAKE_CURRENT_BINARY_DIR}/test-results/widgets.xml,junitxml")
+    set_tests_properties(behavior_contracts PROPERTIES TIMEOUT 30)
+    # Native font/window initialization varies on hosted Windows runners. Keep
+    # per-assertion deadlines, but allow the complete GUI suite more headroom.
+    set_tests_properties(widget_contracts PROPERTIES TIMEOUT 90)
     qt_add_executable(mt_gesture_tests tests/unit/GestureTests.cpp src/app/GestureController.cpp)
     target_link_libraries(mt_gesture_tests PRIVATE mt_ui mt_platform Qt6::Test mt_options Qt6::QWindowsIntegrationPlugin)
     set_target_properties(mt_gesture_tests PROPERTIES WIN32_EXECUTABLE FALSE)
