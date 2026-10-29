@@ -44,9 +44,11 @@ try {
             $_ -match '/LICENSES/[^/]+$' -or
             $_ -match '/src/3rdparty/(.+/)?(LICENSE[^/]*|COPYING[^/]*|COPYRIGHT[^/]*|NOTICE[^/]*|qt_attribution.json|README[^/]*)$'
         })
-        for ($offset = 0; $offset -lt $notices.Count; $offset += 20) {
-            $batch = $notices[$offset..([Math]::Min($offset + 19, $notices.Count - 1))]
-            & tar -xf $archive -C $qtNotices @batch
+        if ($notices.Count) {
+            # One pass through each xz archive; -T also avoids Windows command-line limits.
+            $noticeList = Join-Path $stage ($module.name + '-notices.txt')
+            $notices | Set-Content -LiteralPath $noticeList -Encoding utf8NoBOM
+            & tar -xf $archive -C $qtNotices -T $noticeList
             Assert-NativeSuccess '提取 Qt 与内置组件许可'
         }
     }
