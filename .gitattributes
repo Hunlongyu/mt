@@ -1,0 +1,14 @@
+* text=auto eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.in text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.ps1 text eol=lf
+*.mjs text eol=lf
+*.svg text eol=lf
+*.png binary
+*.ico binary
+*.qm binary
+*.zip binary

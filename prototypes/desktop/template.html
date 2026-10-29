@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>MT · 桌面工具原型</title>
+  <style>/*__THEME__*/</style>
+  <style>/*__STYLES__*/</style>
+  <style>/*__LAUNCHER_STYLES__*/</style>
+  <style>/*__CLIPBOARD_STYLES__*/</style>
+</head>
+<body>
+  <svg class="sr-only" aria-hidden="true" focusable="false"><defs><filter id="reference-icon-alpha" color-interpolation-filters="sRGB"><feFlood flood-color="#535353" result="key"/><feBlend in="SourceGraphic" in2="key" mode="difference" result="difference"/><feColorMatrix in="difference" type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 1 1 1 0 0" result="mask"/><feComponentTransfer in="mask" result="alpha"><feFuncA type="linear" slope="8" intercept="0"/></feComponentTransfer><feComposite in="SourceGraphic" in2="alpha" operator="in"/></filter></defs></svg>
+  <header class="preview-bar">
+    <div class="preview-brand"><span class="brand-mark" data-icon="layers"></span><strong>MT</strong><span class="preview-label">界面原型</span></div>
+    <nav class="view-switch" aria-label="预览布局">
+      <button data-view="overview" aria-pressed="true">并排预览</button>
+      <button data-view="launcher" aria-pressed="false">启动面板</button>
+      <button data-view="clipboard" aria-pressed="false">剪贴板</button>
+    </nav>
+    <div class="preview-actions">
+      <div class="theme-switch" aria-label="主题"><button data-theme-choice="light" aria-label="浅色主题" title="浅色主题" aria-pressed="true" data-icon="sun"></button><button data-theme-choice="dark" aria-label="深色主题" title="深色主题" aria-pressed="false" data-icon="moon"></button></div>
+      <button class="icon-button" data-action="help" aria-label="原型说明" title="原型说明" data-icon="info"></button>
+      <button class="icon-button" data-action="reset-demo" aria-label="重置示例" title="重置示例" data-icon="reset"></button>
+    </div>
+  </header>
+  <main id="workspace" class="workspace" data-view="overview">
+    <section id="launcher-panel" class="launcher-surface" aria-label="启动面板" tabindex="0">
+      <div class="launcher-window">
+        <header class="launcher-chrome">
+          <button class="launcher-chrome-button" data-launcher-action="menu" aria-label="启动面板菜单" title="菜单" aria-haspopup="menu"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18M3 12h18M3 19h18"/></svg></button>
+          <h1 id="launcher-title">MT</h1>
+          <button class="launcher-chrome-button launcher-pin" data-launcher-action="pin" aria-label="保持打开" title="保持打开" aria-pressed="false" data-icon="pin"></button>
+          <button class="launcher-chrome-button launcher-close" data-launcher-action="hide" aria-label="收起启动面板" title="收起" data-icon="close"></button>
+        </header>
+        <div id="app-grid" class="launcher-grid" role="group" aria-label="启动项目网格"></div>
+        <nav id="launcher-categories" class="launcher-tabs" aria-label="启动分类"></nav>
+      </div>
+      <div id="launcher-search-popup" class="launcher-search-popup" hidden><label><span data-icon="search"></span><input id="launcher-search" type="search" aria-label="搜索全部分类" placeholder="搜索全部分类" autocomplete="off"><kbd>Esc</kbd></label></div>
+      <span id="launcher-page-status" class="sr-only" role="status" aria-live="polite"></span>
+    </section>
+    <section id="clipboard-panel" class="panel clipboard-panel" aria-label="剪贴板" tabindex="-1">
+      <header class="clipboard-toolbar">
+        <div id="clipboard-browse-bar" class="clipboard-browse-bar">
+          <div class="clipboard-filters" role="group" aria-label="记录过滤；未选中时显示全部">
+            <button class="icon-button clipboard-filter-button" data-clip-filter="text" aria-label="筛选文本" aria-pressed="false" title="文本" data-icon="text-lines"></button>
+            <button class="icon-button clipboard-filter-button" data-clip-filter="image" aria-label="筛选图片" aria-pressed="false" title="图片" data-icon="image"></button>
+            <button class="icon-button clipboard-filter-button" data-clip-filter="files" aria-label="筛选文件" aria-pressed="false" title="文件" data-icon="document"></button>
+            <button class="icon-button clipboard-filter-button" data-clip-filter="favorite" aria-label="筛选收藏" aria-pressed="false" title="收藏" data-icon="star"></button>
+          </div>
+          <div class="clipboard-toolbar-actions">
+            <button class="icon-button" id="clipboard-search-toggle" data-action="show-clip-search" aria-label="搜索剪贴板" title="搜索（Ctrl+F / /）" aria-expanded="false" aria-controls="clipboard-search-wrap" data-icon="search"></button>
+            <button class="icon-button" id="clipboard-menu-toggle" data-action="clipboard-menu" aria-label="剪贴板菜单" title="更多" aria-haspopup="menu" aria-expanded="false" aria-controls="context-menu" data-icon="more"></button>
+            <button class="icon-button close-button" data-action="hide-clipboard" aria-label="收起剪贴板" title="收起" data-icon="close"></button>
+          </div>
+        </div>
+        <div id="clipboard-search-wrap" class="clipboard-search-wrap" hidden>
+          <label class="clipboard-search-field"><span data-icon="search"></span><input id="clipboard-search" type="search" placeholder="搜索记录" aria-label="搜索剪贴板记录" autocomplete="off"></label>
+          <button class="icon-button" data-action="hide-clip-search" aria-label="收起搜索" title="清除并收起搜索（Esc）" data-icon="close"></button>
+        </div>
+      </header>
+      <div id="capture-status" class="capture-status" hidden><span data-icon="pause"></span>已暂停记录<button data-action="pause-clipboard">继续</button></div>
+      <div id="clip-list" class="clip-list" aria-label="剪贴板记录列表" aria-describedby="clipboard-keyboard-help"></div>
+      <p id="clipboard-keyboard-help" class="sr-only">方向键选择记录，Enter 回贴，Space 预览，Ctrl+F 或斜杠打开搜索，Esc 清除并收起搜索。</p>
+      <span id="clipboard-results" class="sr-only" role="status" aria-live="polite"></span>
+    </section>
+    <div id="empty-stage" class="empty-stage" hidden><span data-icon="layers"></span><h2>面板已收起</h2><p>从上方切换面板，继续体验。</p><button class="primary-button" data-view="overview">重新打开</button></div>
+  </main>
+  <aside class="prototype-footer" aria-label="原型交互验证">
+    <div class="prototype-disclaimer"><span class="status-dot"></span>示例数据 · 不操作系统</div>
+    <label class="paste-sandbox"><span data-icon="arrow-bend"></span><span>回贴试验区</span><input id="paste-target" placeholder="选中记录后按 Enter，内容会出现在这里" aria-label="回贴试验区"><button class="icon-button" data-action="clear-paste" aria-label="清空回贴试验区" title="清空" data-icon="close"></button></label>
+    <span class="prototype-version">DESKTOP CONCEPT / 08</span>
+  </aside>
+  <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
+    <header class="settings-titlebar"><div><span data-icon="settings"></span><h2 id="settings-title">设置</h2></div><button class="icon-button close-button" data-action="cancel-settings" aria-label="关闭设置" data-icon="close"></button></header>
+    <div class="settings-layout">
+      <nav id="settings-navigation" class="settings-navigation" aria-label="设置分类"></nav>
+      <div class="settings-content" id="settings-content"></div>
+    </div>
+    <footer class="settings-footer"><span id="settings-error" class="form-error" role="alert"></span><button class="secondary-button" data-action="cancel-settings">取消</button><button class="primary-button" data-action="save-settings">保存设置</button></footer>
+  </dialog>
+  <dialog id="item-dialog" class="small-dialog" aria-labelledby="item-dialog-title">
+    <form id="item-form">
+      <header class="dialog-header"><h2 id="item-dialog-title">添加项目</h2><button type="button" class="icon-button close-button" data-close="item-dialog" aria-label="关闭添加项目" data-icon="close"></button></header>
+      <div class="dialog-body">
+        <label class="field-label">名称<input id="item-name" name="name" maxlength="48" placeholder="例如：项目文档" required></label>
+        <label class="field-label">目标<input id="item-target" name="target" maxlength="300" placeholder="应用路径、文件夹或网址" required></label>
+        <div class="field-columns"><label class="field-label">分类<select id="item-category" name="category"></select></label><label class="field-label">类型<select id="item-type" name="type"><option value="app">应用</option><option value="folder">文件夹</option><option value="link">网址</option></select></label></div>
+        <p id="item-error" class="form-error" role="alert"></p>
+      </div>
+      <footer class="dialog-footer"><button type="button" class="secondary-button" data-close="item-dialog">取消</button><button type="submit" class="primary-button">保存项目</button></footer>
+    </form>
+  </dialog>
+  <dialog id="preview-dialog" class="preview-dialog" aria-labelledby="preview-title">
+    <header class="dialog-header"><div class="preview-title-wrap"><span id="preview-type-icon"></span><h2 id="preview-title">内容预览</h2></div><button class="icon-button close-button" data-close="preview-dialog" aria-label="关闭预览" data-icon="close"></button></header>
+    <div id="preview-content" class="preview-content"></div>
+    <footer class="dialog-footer"><span id="preview-meta"></span><button class="secondary-button" data-action="preview-copy">复制</button><button class="primary-button" data-action="preview-paste">回贴</button></footer>
+  </dialog>
+  <dialog id="confirm-dialog" class="small-dialog confirm-dialog" aria-labelledby="confirm-title">
+    <div class="dialog-body"><span class="confirm-symbol" data-icon="info"></span><h2 id="confirm-title"></h2><p id="confirm-description"></p></div>
+    <footer class="dialog-footer"><button class="secondary-button" data-close="confirm-dialog">取消</button><button class="primary-button" id="confirm-accept">确认</button></footer>
+  </dialog>
+  <dialog id="help-dialog" class="small-dialog" aria-labelledby="help-title">
+    <header class="dialog-header"><h2 id="help-title">原型说明</h2><button class="icon-button close-button" data-close="help-dialog" aria-label="关闭原型说明" data-icon="close"></button></header>
+    <div class="dialog-body help-body"><p>启动面板按原版 HLaunch 的紧凑网格与底部分类还原；手势和黑屏仅在统一设置中配置。</p><ul><li>点击图标演示启动；右键条目可编辑，右键空槽或 Insert 可在原位置注册项目。</li><li>启动面板内直接输入，或 Ctrl+F 搜索全部分类；Esc 先清空搜索，再收起面板。</li><li>滚轮或 Tab / Shift+Tab 切换分类，PageUp / PageDown 翻页；菜单中也有对应入口。</li><li>可拖动条目到精确槽位或其他分类；空槽会保留。</li><li>剪贴板通过图标过滤文本、图片、文件或收藏；默认不选中任何图标，显示全部。再次点击选中图标可取消过滤。</li><li>点击放大镜或 Ctrl+F / / 打开搜索时隐藏分类图标；Esc 清除并收起搜索，恢复原过滤选择。选中记录后 Enter 回贴、Space 预览；低频操作位于更多菜单。</li><li>切换浅色 / 深色查看两套主题，示例变更保存在当前浏览器。</li></ul><p class="help-boundary">原型不会启动真实程序、监听系统剪贴板、修改开机启动或锁住屏幕。密码不会保存。只有明确点击“复制”时，才尝试写入浏览器剪贴板。</p></div>
+    <footer class="dialog-footer"><button class="primary-button" data-close="help-dialog">开始体验</button></footer>
+  </dialog>
+  <div id="context-menu" class="context-menu" role="menu" hidden></div>
+  <div id="launcher-menu" class="context-menu launcher-menu" role="menu" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script>/*__ICONS__*/</script>
+  <script>/*__DATA__*/</script>
+  <script>/*__MODEL__*/</script>
+  <script>/*__LAUNCHER_ASSETS__*/</script>
+  <script>/*__LAUNCHER__*/</script>
+  <script>/*__APP__*/</script>
+</body>
+</html>

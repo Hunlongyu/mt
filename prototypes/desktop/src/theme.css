@@ -1,0 +1,9 @@
+/* Shared visual rules. Palette values are generated from theme.json by build.mjs. */
+:root {
+  --radius:8px; --radius-control:4px; --radius-item:4px;
+  --font:system-ui,"Microsoft YaHei UI","Microsoft YaHei","Segoe UI",sans-serif;
+  --icon-stroke:1.5; --title-weight:500; --motion:120ms;
+  --shadow:0 8px 24px var(--shadow-color);
+  --scrim:var(--chrome); --tag-bg:var(--active-bg);
+  --toast:var(--surface-raised); --toast-text:var(--text);
+}

@@ -1,0 +1,14 @@
+{
+  "version": 6,
+  "configurePresets": [{
+    "name": "win-static-release", "generator": "Ninja",
+    "binaryDir": "${sourceDir}/out/build/${presetName}",
+    "environment": { "VSLANG": "1033" },
+    "cacheVariables": {
+      "CMAKE_BUILD_TYPE": "Release", "CMAKE_PREFIX_PATH": "$env{TOOLS_QT_ROOT}",
+      "BUILD_TESTING": "ON"
+    }
+  }],
+  "buildPresets": [{"name": "win-static-release", "configurePreset": "win-static-release"}],
+  "testPresets": [{"name": "win-static-release", "configurePreset": "win-static-release", "output": {"outputOnFailure": true}}]
+}

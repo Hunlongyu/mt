@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>MT · 设置界面原型</title>
+  <style>/*__THEME__*/</style>
+  <style>/*__STYLES__*/</style>
+</head>
+<body>
+  <div class="review-bar" aria-label="原型评审工具">
+    <div class="review-title"><strong>MT</strong><span class="review-divider"></span><span id="review-label">设置界面</span><span class="prototype-tag" id="prototype-label">交互原型 · 02</span></div>
+    <div class="review-actions"><span id="prototype-note">仅操作浏览器中的示例设置</span><button class="review-button" id="reset-demo" type="button"></button></div>
+  </div>
+  <div class="settings-window" id="settings-window">
+    <header class="titlebar"><span class="app-glyph" aria-hidden="true">M</span><span id="window-title">MT · 设置</span><div class="titlebar-actions"><button type="button" class="icon-button" id="close-settings" aria-label="关闭设置"></button></div></header>
+    <div class="workspace">
+      <aside class="sidebar" aria-label="设置分类"><nav id="navigation"></nav><button type="button" class="about-link" id="about-button"></button></aside>
+      <main class="main-content" id="main-content">
+        <header class="page-header"><div><h1 id="page-title"></h1><p id="page-description"></p></div><div id="page-action"></div></header>
+        <div class="page-tabs" id="page-tabs" role="tablist" hidden></div>
+        <div class="page-scroll" id="page-scroll"><div id="page-content"></div></div>
+        <footer class="save-bar"><div id="save-state" class="save-state" role="status" aria-live="polite"></div><div class="button-group"><button type="button" class="button" id="cancel-settings">取消</button><button type="button" class="button primary" id="save-settings">保存设置</button></div></footer>
+      </main>
+    </div>
+  </div>
+  <div class="review-caption" id="review-caption"></div>
+  <div class="closed-state" id="closed-state" hidden><span class="closed-brand">MT</span><p id="closed-label"></p><button type="button" class="button primary" id="reopen-settings"></button></div>
+  <dialog id="dialog" aria-labelledby="dialog-title"><form id="dialog-form" novalidate><header class="dialog-header"><h2 id="dialog-title"></h2><button type="button" class="icon-button" id="dialog-close" aria-label="关闭"></button></header><div class="dialog-body" id="dialog-body"></div><footer class="dialog-footer"><button type="button" class="button" id="dialog-cancel"></button><button type="submit" class="button primary" id="dialog-confirm"></button></footer></form></dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <script>/*__ICONS__*/</script>
+  <script>/*__APP__*/</script>
+</body>
+</html>

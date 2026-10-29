@@ -1,0 +1,47 @@
+/* One toolbar in both modes. Search never adds another row to the history panel. */
+/* Keep the bottom inset outside the scrolling list so it remains visible at every scroll position. */
+.clipboard-panel{width:380px;height:524px;max-width:100%;display:flex;flex-direction:column;padding-bottom:8px}
+.clipboard-toolbar{height:40px;flex:none;border-bottom:1px solid var(--border);padding:4px 7px 4px 12px;background:var(--chrome)}
+.clipboard-browse-bar{height:100%;display:flex;align-items:center;gap:9px}
+.clipboard-filters{display:flex;align-items:center;gap:2px;padding:2px;border-radius:var(--radius-control)}
+.clipboard-filter-button[aria-pressed="true"]{box-shadow:inset 0 -2px var(--tab-indicator)}
+.clipboard-toolbar-actions{display:flex;align-items:center;gap:2px;margin-left:auto}
+.clipboard-toolbar .icon-button{width:28px;height:28px}
+.clipboard-toolbar svg.icon{width:16px;height:16px}
+.clipboard-search-wrap{height:100%;display:flex;align-items:center;gap:4px}
+.clipboard-search-field{height:30px;display:flex;align-items:center;gap:8px;min-width:0;flex:1;color:var(--muted)}
+.clipboard-search-field input{width:100%;min-width:0;border:1px solid var(--field-border);border-radius:var(--radius-control);padding:4px 5px;background:var(--field);color:var(--text);font-size:12px}
+.clipboard-search-field input:focus-visible{outline:none;border-color:var(--focus)}
+.clipboard-search-field input::placeholder{color:var(--faint)}
+.clip-list{flex:1;min-height:0;overflow-y:auto;margin-top:8px;padding:3px 6px;scrollbar-width:thin;scrollbar-color:var(--scrollbar) transparent}
+@supports selector(::-webkit-scrollbar){
+  .clip-list{scrollbar-width:auto;scrollbar-color:auto}
+  .clip-list::-webkit-scrollbar{width:8px;background:transparent}
+  .clip-list::-webkit-scrollbar-thumb{background:var(--scrollbar);background-clip:content-box;border:2px solid transparent;border-radius:4px}
+  .clip-list::-webkit-scrollbar-thumb:hover{background-color:var(--muted)}
+}
+.clip-card{padding:10px 12px 8px;min-height:80px;margin-bottom:4px;background:var(--surface-subtle);border:1px solid var(--border);border-radius:8px;cursor:pointer;position:relative;outline-offset:-2px!important}
+.clip-card:last-child{margin-bottom:0}
+.clip-card:hover{background:var(--surface-hover);border-color:var(--border-strong)}
+.clip-card.selected{border-color:var(--muted);box-shadow:inset 0 0 0 .5px var(--muted)}
+.clip-excerpt{padding-right:76px;min-height:40px;font-size:14px;line-height:1.65;white-space:pre-line;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.clip-code{font-family:var(--font);font-size:14px;line-height:1.8}
+.clip-media{display:flex;align-items:center;gap:10px;min-height:48px;padding-right:76px}
+.clip-art{width:76px;height:48px;flex:none;object-fit:contain;display:block;border-radius:3px;background:var(--surface-subtle)}
+.clip-media-copy{min-width:0;display:flex;flex-direction:column;gap:3px}
+.clip-media-copy strong{font-size:12px;font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.clip-media-copy span{color:var(--muted);font-size:10px}
+.clip-file-icon{height:38px;width:38px;display:grid;place-items:center;flex:none;color:var(--muted)}
+.clip-file-icon svg.icon{height:25px;width:25px}
+.clip-card-meta{height:18px;display:flex;align-items:center;gap:10px;margin-top:5px;color:var(--muted);font-size:11px}
+.clip-number{min-width:25px;height:18px;display:grid;place-items:center;padding:0 5px;border-radius:4px;background:var(--accent-soft);color:var(--accent)}
+.clip-type{display:flex;align-items:center}.clip-type .icon{width:13px;height:13px}
+.clip-time{margin-left:auto;white-space:nowrap}
+.clip-quick-actions{position:absolute;right:10px;top:8px;display:flex;gap:0}
+.clip-quick-actions .icon-button{width:22px;height:20px}.clip-quick-actions .icon{width:15px;height:15px}
+.clip-quick-actions .icon-button.active{color:var(--accent);background:transparent}
+.icon-button.active{color:var(--active-text);background:var(--active-bg)}
+.capture-status{padding:5px 12px;color:var(--muted);background:var(--surface-subtle);display:flex;gap:6px;align-items:center;font-size:11px;border-bottom:1px solid var(--border);flex:none}
+.capture-status svg.icon{width:13px;height:13px}.capture-status button{margin-left:auto;color:var(--accent)}
+.workspace[data-view="clipboard"]{padding-top:20px;padding-bottom:20px;align-items:flex-start}
+@media(max-width:420px){.clipboard-panel{width:100%}}

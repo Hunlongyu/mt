@@ -1,0 +1,40 @@
+# Generated build outputs
+/out/
+/build/
+/build-*/
+/dist/
+/.cache/
+/.vs/
+CMakeUserPresets.json
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+
+# Local IDE state
+*.user
+*.suo
+*.userosscache
+
+# Runtime data and local secrets
+/data/
+/logs/
+/artifacts/
+/.env
+/.env.*
+!.env.example
+
+# Generated offline prototypes and local preview logs
+/prototypes/desktop/index.html
+/prototypes/settings/index.html
+/prototypes/settings/server.*.log
+/prototypes/settings/assets/icon-manifest.json
+/prototypes/app-icons/
+/.mt-update-*/
+
+# Archives and dependency sources created by release packaging
+/third_party/
+/dependencies/
+
+# Local development history contains workstation-specific diagnostics/screenshots.
+/docs/ai/
+/prototypes/**/evidence/

@@ -1,0 +1,17 @@
+{
+  "qtVersion": "6.11.2",
+  "baseUrl": "https://download.qt.io/archive/qt/6.11/6.11.2/submodules/",
+  "sdk": {
+    "provider": "yuanpeirong/buildQt",
+    "tag": "Qt6.11.2_rev0",
+    "file": "Qt_6.11.2-static-Release_msvc2022_64_RP.7z",
+    "url": "https://github.com/yuanpeirong/buildQt/releases/download/Qt6.11.2_rev0/Qt_6.11.2-static-Release_msvc2022_64_RP.7z",
+    "sha256": "07761f8893b3755e5cfdd764d2afcd2e5f1310904f0406a9c78ddab16afde8a1",
+    "directory": "6.11.2-static/msvc2022_64_RP"
+  },
+  "archives": [
+    {"name": "qtbase", "file": "qtbase-everywhere-src-6.11.2.tar.xz", "sha256": "5b2e00eccaf5a4d8c14134ffa0ea8dfd0a35ae1ffc7f8d87fa4305a1ed23cf22"},
+    {"name": "qtsvg", "file": "qtsvg-everywhere-src-6.11.2.tar.xz", "sha256": "d594337feca84c26fb67fe87b85e6a5c12fda404b611d905f9d138210c311876"},
+    {"name": "qttranslations", "file": "qttranslations-everywhere-src-6.11.2.tar.xz", "sha256": "021684c1a7937a9fabc3b056a6698ad5978794caf9ac190fd6cc11399e67c014"}
+  ]
+}

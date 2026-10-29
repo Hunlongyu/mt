@@ -1,0 +1,105 @@
+name: Windows 构建与发布
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: 初始化 MSVC
+        id: toolchain
+        shell: pwsh
+        run: |
+          . ./scripts/msvc.ps1
+          Import-MsvcEnvironment
+          "toolset=$($env:VCToolsVersion.TrimEnd('\'))" >> $env:GITHUB_OUTPUT
+      - name: 缓存静态 Qt 与源码归档
+        id: qt-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            C:\mt-deps\sdk
+            C:\mt-deps\archives
+          key: qt-static-prebuilt-${{ hashFiles('scripts/get-qt.ps1', 'scripts/dependencies.json') }}
+      - name: 下载并校验静态 Qt 6.11.2
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: ./scripts/get-qt.ps1
+      - name: 构建并运行测试
+        shell: pwsh
+        run: ./scripts/build.ps1 -QtRoot C:/mt-deps/sdk/6.11.2-static/msvc2022_64_RP
+      - name: 验证原型构建
+        shell: pwsh
+        run: |
+          node prototypes/desktop/build.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node prototypes/settings/build.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: 验证单 EXE 隔离启动
+        shell: pwsh
+        run: ./scripts/verify-preview.ps1
+      - name: 验证更新替换与失败保护
+        shell: pwsh
+        run: ./scripts/verify-update.ps1
+      - name: 打包发布文件与重建材料
+        shell: pwsh
+        env:
+          MT_REF_TYPE: ${{ github.ref_type }}
+          MT_REF_NAME: ${{ github.ref_name }}
+        run: |
+          $tag = if ($env:MT_REF_TYPE -eq 'tag') { $env:MT_REF_NAME } else { '' }
+          ./scripts/package-release.ps1 -ArchiveRoot C:/mt-deps/archives -Tag $tag
+      - name: 保存构建产物
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mt-windows-x64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: 保存测试日志
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-results
+          path: |
+            out/build/win-static-release/test-results/*
+            out/update-evidence/*
+            out/native-evidence/*
+          if-no-files-found: ignore
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: mt-windows-x64
+          path: dist
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags=(--verify-tag --generate-notes --title "$RELEASE_TAG")
+          if [[ "$RELEASE_TAG" == *-* ]]; then flags+=(--prerelease --latest=false); fi
+          gh release create "$RELEASE_TAG" dist/* "${flags[@]}"
