@@ -28,7 +28,7 @@ git push origin v0.1.0
 
 ## 使用修改后的 Qt 重建
 
-安装支持 C++23 的 MSVC、Windows SDK、CMake 3.29+、Ninja、Python 3、PowerShell 7，将源码材料解压到短路径，例如 `C:/mt-source`。
+安装支持 C++23 的 MSVC、Windows SDK、CMake 3.29+、Ninja、Python 3.12+、PowerShell 7，将源码材料解压到短路径，例如 `C:/mt-source`。发布打包同样需要 Python 3.12+，使用标准库流式读取 Qt 源码归档并提取许可，不依赖宿主的 xz 解码器。
 
 ```powershell
 ./scripts/build-qt.ps1 -InstallRoot C:/mt-deps/qt -WorkRoot C:/mt-deps/build -ArchiveRoot ./dependencies

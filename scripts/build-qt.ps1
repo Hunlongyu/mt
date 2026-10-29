@@ -7,8 +7,6 @@ param(
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/msvc.ps1"
 Import-MsvcEnvironment
-$tar = Join-Path $env:SystemRoot 'System32/tar.exe'
-if (!(Test-Path -LiteralPath $tar)) { throw '缺少 Windows 系统 tar.exe。' }
 $manifest = Get-Content -Raw "$PSScriptRoot/dependencies.json" | ConvertFrom-Json
 foreach ($directory in @($InstallRoot, $WorkRoot, $ArchiveRoot)) {
     if ($directory -match '[&|<>%\r\n"]') { throw '构建目录包含不支持的字符。' }
@@ -24,7 +22,7 @@ foreach ($module in $manifest.archives) {
     if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ine $module.sha256) { throw "Qt 源码校验失败：$($module.file)" }
     $source = Join-Path $WorkRoot ($module.file -replace '\.tar\.xz$', '')
     if (!(Test-Path -LiteralPath $source)) {
-        & $tar -xf $archive -C $WorkRoot
+        & python "$PSScriptRoot/extract-qt.py" $archive $WorkRoot
         Assert-NativeSuccess '解压 Qt'
     }
     # The precompiled Chinese translation is embedded; retain its corresponding source.

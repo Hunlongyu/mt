@@ -43,19 +43,9 @@ try {
         Write-Output "校验并提取 $($module.name) 许可"
         $archive = Join-Path $ArchiveRoot $module.file
         if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ine $module.sha256) { throw "Qt 源码校验失败：$archive" }
-        $entries = & $tar -tf $archive
-        Assert-NativeSuccess '读取 Qt 许可清单'
-        $notices = @($entries | Where-Object {
-            $_ -match '/LICENSES/[^/]+$' -or
-            $_ -match '/src/3rdparty/(.+/)?(LICENSE[^/]*|COPYING[^/]*|COPYRIGHT[^/]*|NOTICE[^/]*|qt_attribution.json|README[^/]*)$'
-        })
-        if ($notices.Count) {
-            # One pass through each xz archive; -T also avoids Windows command-line limits.
-            $noticeList = Join-Path $stage ($module.name + '-notices.txt')
-            $notices | Set-Content -LiteralPath $noticeList -Encoding utf8NoBOM
-            & $tar -xf $archive -C $qtNotices -T $noticeList
-            Assert-NativeSuccess '提取 Qt 与内置组件许可'
-        }
+        Write-Output "$($module.name) SHA-256 已通过，开始流式提取"
+        & python "$PSScriptRoot/extract-qt.py" $archive $qtNotices --licenses
+        Assert-NativeSuccess '提取 Qt 与内置组件许可'
     }
     Copy-Item -LiteralPath $exe -Destination (Join-Path $Destination 'mt-windows-x64.exe')
     Write-Output '生成便携包'

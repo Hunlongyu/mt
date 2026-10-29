@@ -55,7 +55,12 @@ jobs:
       - name: 验证更新替换与失败保护
         shell: pwsh
         run: ./scripts/verify-update.ps1
+      - name: 准备源码归档工具
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
       - name: 打包发布文件与重建材料
+        timeout-minutes: 5
         shell: pwsh
         env:
           MT_REF_TYPE: ${{ github.ref_type }}
