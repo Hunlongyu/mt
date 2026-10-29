@@ -6,9 +6,13 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/msvc.ps1"
+$tar = Join-Path $env:SystemRoot 'System32/tar.exe'
+if (!(Test-Path -LiteralPath $tar)) { throw '缺少 Windows 系统 tar.exe。' }
 $project = Split-Path $PSScriptRoot -Parent
 Push-Location $project
 try {
+    Write-Output "发布打包使用系统 tar：$tar"
+    Write-Output '检查版本与源码状态'
     $cmakeText = Get-Content -Raw 'CMakeLists.txt'
     if ($cmakeText -notmatch 'project\(mt VERSION (\d+\.\d+\.\d+)') { throw '无法读取项目版本。' }
     $version = $matches[1]
@@ -36,9 +40,10 @@ try {
     $qtNotices = Join-Path $runtime 'licenses/qt'
     New-Item -ItemType Directory -Path $qtNotices -Force | Out-Null
     foreach ($module in $dependencyManifest.archives) {
+        Write-Output "校验并提取 $($module.name) 许可"
         $archive = Join-Path $ArchiveRoot $module.file
         if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ine $module.sha256) { throw "Qt 源码校验失败：$archive" }
-        $entries = & tar -tf $archive
+        $entries = & $tar -tf $archive
         Assert-NativeSuccess '读取 Qt 许可清单'
         $notices = @($entries | Where-Object {
             $_ -match '/LICENSES/[^/]+$' -or
@@ -48,17 +53,19 @@ try {
             # One pass through each xz archive; -T also avoids Windows command-line limits.
             $noticeList = Join-Path $stage ($module.name + '-notices.txt')
             $notices | Set-Content -LiteralPath $noticeList -Encoding utf8NoBOM
-            & tar -xf $archive -C $qtNotices -T $noticeList
+            & $tar -xf $archive -C $qtNotices -T $noticeList
             Assert-NativeSuccess '提取 Qt 与内置组件许可'
         }
     }
     Copy-Item -LiteralPath $exe -Destination (Join-Path $Destination 'mt-windows-x64.exe')
+    Write-Output '生成便携包'
     Compress-Archive -Path "$runtime/*" -DestinationPath (Join-Path $Destination "mt-$version-windows-x64.zip") -Force
     # Complete application source + exact Qt and WIL source, sufficient to rebuild/relink.
     $sourceTar = Join-Path $stage 'project.tar'
+    Write-Output '归档应用与依赖源码'
     & git archive --format=tar --output=$sourceTar HEAD
     Assert-NativeSuccess '打包项目源码'
-    & tar -xf $sourceTar -C $source
+    & $tar -xf $sourceTar -C $source
     Assert-NativeSuccess '展开项目源码'
     $archives = Join-Path $source 'dependencies'
     New-Item -ItemType Directory -Path $archives -Force | Out-Null
@@ -73,6 +80,7 @@ try {
     New-Item -ItemType Directory -Path $wilDestination -Force | Out-Null
     Get-ChildItem -LiteralPath $wil -Force | Where-Object Name -ne '.git' | Copy-Item -Destination $wilDestination -Recurse
     Copy-Item -LiteralPath 'docs/releasing.md' -Destination (Join-Path $source 'REBUILD.md')
+    Write-Output '生成完整源码包'
     Compress-Archive -Path "$source/*" -DestinationPath (Join-Path $Destination "mt-$version-source-with-dependencies.zip") -Force
     $sums = Get-ChildItem -LiteralPath $Destination -File | Where-Object { $_.Extension -in @('.exe','.zip') } | Sort-Object Name | ForEach-Object {
         '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
