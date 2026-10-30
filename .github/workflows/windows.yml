@@ -2,17 +2,14 @@ name: Windows 构建与发布
 
 on:
   push:
-    branches: [main]
-    tags: ['v*']
-  pull_request:
-  workflow_dispatch:
+    tags: ['v*.*.*']
 
 permissions:
   contents: read
 
 concurrency:
   group: windows-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -20,6 +17,19 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: 校验发布标签与项目版本
+        shell: pwsh
+        env:
+          MT_RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $component = '(?:0|[1-9][0-9]*)'
+          $pattern = "^v(?<version>$component\.$component\.$component)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$"
+          if ($env:MT_RELEASE_TAG -cnotmatch $pattern) { throw '发布标签格式无效，应为 vX.Y.Z 或约定的预发布标签。' }
+          $tagVersion = $matches['version']
+          $cmakeText = Get-Content -Raw -LiteralPath 'CMakeLists.txt'
+          if ($cmakeText -notmatch 'project\(mt VERSION (\d+\.\d+\.\d+)') { throw '无法读取 CMake 项目版本。' }
+          if ($tagVersion -cne $matches[1]) { throw '发布标签与 CMake 项目版本不一致。' }
       - name: 初始化 MSVC
         id: toolchain
         shell: pwsh
@@ -63,11 +73,8 @@ jobs:
         timeout-minutes: 5
         shell: pwsh
         env:
-          MT_REF_TYPE: ${{ github.ref_type }}
-          MT_REF_NAME: ${{ github.ref_name }}
-        run: |
-          $tag = if ($env:MT_REF_TYPE -eq 'tag') { $env:MT_REF_NAME } else { '' }
-          ./scripts/package-release.ps1 -ArchiveRoot C:/mt-deps/archives -Tag $tag
+          MT_RELEASE_TAG: ${{ github.ref_name }}
+        run: ./scripts/package-release.ps1 -ArchiveRoot C:/mt-deps/archives -Tag $env:MT_RELEASE_TAG
       - name: 保存构建产物
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

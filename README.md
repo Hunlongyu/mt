@@ -7,10 +7,10 @@
 <p align="center">一个 Windows 桌面工具，集启动面板、剪贴板历史、鼠标手势与锁屏于一体。<br>单 EXE · 免安装 · 中文界面</p>
 
 <p align="center">
-  <a href="https://github.com/Hunlongyu/mt/releases/latest"><img src="https://img.shields.io/github/v/release/Hunlongyu/mt?style=flat-square&amp;label=版本" alt="最新正式版本"></a>
-  <a href="https://github.com/Hunlongyu/mt/releases"><img src="https://img.shields.io/github/downloads/Hunlongyu/mt/total?style=flat-square&amp;label=下载次数" alt="Release 资产累计下载次数"></a>
-  <a href="https://github.com/Hunlongyu/mt/actions/workflows/windows.yml"><img src="https://github.com/Hunlongyu/mt/actions/workflows/windows.yml/badge.svg" alt="Windows 构建"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT 许可证"></a>
+  <a href="https://github.com/Hunlongyu/mt/releases/latest"><img src="https://img.shields.io/github/v/release/Hunlongyu/mt?style=flat-square&amp;label=release" alt="Latest release"></a>
+  <a href="https://github.com/Hunlongyu/mt/releases"><img src="https://img.shields.io/github/downloads/Hunlongyu/mt/total?style=flat-square&amp;label=downloads" alt="Total downloads"></a>
+  <a href="https://github.com/Hunlongyu/mt/actions/workflows/windows.yml"><img src="https://img.shields.io/github/actions/workflow/status/Hunlongyu/mt/windows.yml?event=push&amp;style=flat-square&amp;label=build" alt="Windows build"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License"></a>
 </p>
 
 <p align="center">

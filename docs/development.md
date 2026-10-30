@@ -64,7 +64,7 @@ Actions 与后续 Release 的程序文件统一为 `mt.exe`，更新元数据同
 
 ## 本地构建
 
-以下命令均在仓库根目录执行。开发构建也可从通过的 [Actions 运行](https://github.com/Hunlongyu/mt/actions)下载 `mt-windows-x64` 产物，其中的程序为 `mt.exe`。
+以下命令均在仓库根目录执行。Actions 仅在推送版本标签时运行；标签构建产物可从对应的 [Actions 运行](https://github.com/Hunlongyu/mt/actions)下载 `mt-windows-x64`，其中的程序为 `mt.exe`。正式使用优先从 Release 下载。
 
 需要 Visual Studio 2022 或更新版本的 C++ 工具链、Windows SDK、CMake 3.29+、Ninja、PowerShell 7 和静态 Qt SDK。CI 固定使用 **Qt 6.11.2**；MSVC 通过 `vswhere -prerelease` 自动发现。
 
