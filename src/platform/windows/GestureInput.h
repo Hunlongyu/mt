@@ -32,6 +32,9 @@ class GestureInput final : public QObject {
     explicit GestureInput(QObject* parent = nullptr);
     ~GestureInput() override;
     std::expected<void, QString> configure(const GestureInputOptions& options);
+    void setAdminAvailable(bool available) noexcept {
+        adminAvailable_.store(available);
+    }
     void setBlocked(bool blocked) noexcept {
         if (blocked_.exchange(blocked) != blocked && blocked)
             ++cancellation_;
@@ -44,10 +47,14 @@ class GestureInput final : public QObject {
   Q_SIGNALS:
     void frame(const mt::GestureFrame& frame);
     void failed(const QString& error);
+    void clickReplayRequested(mt::WindowTarget target, quintptr foreground, QPoint position,
+                              const QString& button, quint64 generation, quint64 cancellation);
+
   private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
     std::atomic_bool blocked_{false};
+    std::atomic_bool adminAvailable_{false};
     std::atomic<quint64> cancellation_{0};
     std::atomic<quint64> stroke_{0};
     quint64 generation_ = 0;

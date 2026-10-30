@@ -2,6 +2,7 @@
 #include "infrastructure/i18n/I18n.h"
 #include "modules/gestures/GestureOverlay.h"
 #include "modules/gestures/GestureRecognizer.h"
+#include "platform/windows/AdminBridge.h"
 #include "platform/windows/GestureActions.h"
 #include "platform/windows/ShellJobs.h"
 #include "ui/components/Theme.h"
@@ -15,12 +16,21 @@ GestureController::GestureController(Theme& theme, QString root, bool preview,
     : QObject(parent), theme_(theme), root_(std::move(root)), preview_(preview), blocked_(std::move(blocked)) {
     connect(&input_, &GestureInput::frame, this, &GestureController::receive);
     connect(&input_, &GestureInput::failed, this, &GestureController::failed);
+    connect(&input_, &GestureInput::clickReplayRequested, this,
+            [this](WindowTarget target, quintptr foreground, QPoint point, const QString& button,
+                   quint64 generation, quint64 cancellation) {
+                if (admin_ && admin_->ready() && settings_.adminSupport && !blocked_() &&
+                    generation == input_.generation() && cancellation == input_.cancellation())
+                    admin_->replayClick(target, foreground, point, button);
+            });
     auto* timer = new QTimer(this);
     timer->setInterval(25);
     connect(timer, &QTimer::timeout, this, [this] {
-        const bool blocked = blocked_();
+        const bool blocked = blocked_() || (admin_ && admin_->busy());
+        input_.setAdminAvailable(settings_.adminSupport && admin_ && admin_->ready());
         input_.setBlocked(blocked);
-        if (blocked) hide();
+        if (blocked)
+            hide();
     });
     if (!preview_) timer->start();
     const auto screensChanged = [this] { blockNow(); overlays_.clear(); };
@@ -42,7 +52,7 @@ void GestureController::blockNow() {
     hide();
 }
 bool GestureController::hasActiveActions() const {
-    return jobs_ && jobs_->hasActiveActions();
+    return (jobs_ && jobs_->hasActiveActions()) || (admin_ && admin_->busy());
 }
 std::expected<void, QString> GestureController::configure(const Settings& next) {
     auto parsed = GestureRules::parse(next.gestureActions, next.gestureApplicationActions,
@@ -80,7 +90,9 @@ void GestureController::receive(const GestureFrame& frame) {
     const auto actions = rules_.forProcess(frame.process);
     const auto recognition = recognizer.match(actions.keys());
     const auto match = actions.constFind(recognition.key);
-    const bool actionable = match != actions.end() && actions_.available(*match, frame.target);
+    const bool actionable =
+        match != actions.end() && ((settings_.adminSupport && admin_ && admin_->ready()) ||
+                                   actions_.available(*match, frame.target));
     // A retained completion may still execute, but must never repaint its old
     // path after another physical press has started a new stroke.
     if (latestStroke && (settings_.gestureTrail || settings_.gestureShowName)) {
@@ -132,7 +144,13 @@ void GestureController::receive(const GestureFrame& frame) {
                    cancellation == input_.cancellation() && !blocked_() &&
                    GestureInput::isCurrent(frame);
         });
-    } else if (auto result = actions_.execute(*match, frame.target, frame.foregroundAtStart); !result)
+    } else if (settings_.adminSupport && admin_ && admin_->ready()) {
+        admin_->gesture(*match, frame.target, frame.foregroundAtStart, this, [this](auto result) {
+            if (!result)
+                Q_EMIT failed(result.error());
+        });
+    } else if (auto result = actions_.execute(*match, frame.target, frame.foregroundAtStart);
+               !result)
         Q_EMIT failed(result.error());
 }
 }

@@ -108,12 +108,13 @@ void ClipboardPreview::present(const ClipboardRecord& record, bool masked, QRect
     const bool hidden = masked && record.sensitive;
 
     QStringList parts;
-    parts << (record.kind == ClipKind::Image   ? tx(u"图片")
-              : record.kind == ClipKind::Files ? tx(u"文件")
-              : record.kind == ClipKind::Html  ? tx(u"富文本")
-                                               : tx(u"文本"));
+    parts << (record.kind == ClipKind::Image     ? tx(u"图片")
+              : record.kind == ClipKind::Files   ? tx(u"文件")
+              : record.kind == ClipKind::Html    ? tx(u"富文本")
+              : record.kind == ClipKind::Formats ? tx(u"应用专用内容")
+                                                 : tx(u"文本"));
     const auto body = hidden ? tx(u"••••••••  敏感内容已遮蔽") : record.summary();
-    if (!hidden && record.kind != ClipKind::Image) {
+    if (!hidden && record.kind != ClipKind::Image && record.kind != ClipKind::Formats) {
         parts << tx(u"%1 字符").arg(clipCharacters(record.summary()));
         parts << tx(u"%1 行").arg(clipLines(record.summary()));
     }

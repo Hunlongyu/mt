@@ -56,10 +56,11 @@ qt_add_library(mt_platform STATIC src/platform/windows/DesktopServices.cpp src/p
     src/platform/windows/GestureInput.cpp src/platform/windows/GestureActions.cpp
     src/platform/windows/MenuFrame.cpp src/platform/windows/EdgeWatcher.cpp
     src/platform/windows/LockPassword.cpp src/platform/windows/LockSession.cpp
+    src/platform/windows/StartupRegistration.cpp src/platform/windows/AdminBridge.cpp
     src/platform/windows/UpdateInstaller.cpp)
 target_include_directories(mt_platform PUBLIC src)
 target_link_libraries(mt_platform PUBLIC mt_core)
-target_link_libraries(mt_platform PUBLIC Qt6::Core Qt6::Gui PRIVATE mt_options WIL::WIL user32 shell32 ole32 oleaut32 oleacc imm32 shcore uiautomationcore advapi32 dwmapi crypt32 wtsapi32)
+target_link_libraries(mt_platform PUBLIC Qt6::Core Qt6::Gui PRIVATE Qt6::Network mt_options WIL::WIL user32 shell32 ole32 oleaut32 oleacc imm32 shcore uiautomationcore advapi32 dwmapi crypt32 wtsapi32)
 
 qt_add_library(mt_updates STATIC src/infrastructure/updates/UpdateService.cpp)
 target_include_directories(mt_updates PUBLIC src)
@@ -106,6 +107,17 @@ endif()
 if(BUILD_TESTING)
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-results")
     find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
+    qt_add_executable(mt_format_tests tests/unit/ClipboardFormatTests.cpp)
+    target_link_libraries(mt_format_tests PRIVATE mt_core Qt6::Test mt_options Qt6::QSQLiteDriverPlugin)
+    set_target_properties(mt_format_tests PROPERTIES WIN32_EXECUTABLE FALSE)
+    qt_import_plugins(mt_format_tests NO_DEFAULT)
+    add_test(NAME clipboard_formats COMMAND mt_format_tests -o "${CMAKE_CURRENT_BINARY_DIR}/test-results/formats.txt,txt" -o "${CMAKE_CURRENT_BINARY_DIR}/test-results/formats.xml,junitxml")
+    qt_add_executable(mt_system_tests tests/unit/SystemIntegrationTests.cpp)
+    target_link_libraries(mt_system_tests PRIVATE mt_platform Qt6::Network Qt6::Test mt_options WIL::WIL)
+    set_target_properties(mt_system_tests PROPERTIES WIN32_EXECUTABLE FALSE)
+    qt_import_plugins(mt_system_tests NO_DEFAULT)
+    add_test(NAME system_integration COMMAND mt_system_tests -o "${CMAKE_CURRENT_BINARY_DIR}/test-results/system.txt,txt" -o "${CMAKE_CURRENT_BINARY_DIR}/test-results/system.xml,junitxml")
+    set_tests_properties(clipboard_formats system_integration PROPERTIES TIMEOUT 30)
     qt_add_executable(mt_update_tests tests/unit/UpdateTests.cpp)
     target_link_libraries(mt_update_tests PRIVATE mt_updates mt_platform Qt6::Network Qt6::Test mt_options)
     set_target_properties(mt_update_tests PROPERTIES WIN32_EXECUTABLE FALSE)

@@ -10,6 +10,7 @@ namespace mt {
 class GestureOverlay;
 class ShellJobs;
 class Theme;
+class AdminBridge;
 class GestureController final : public QObject {
     Q_OBJECT
   public:
@@ -19,6 +20,9 @@ class GestureController final : public QObject {
     std::expected<void, QString> configure(const Settings& settings);
     void blockNow();
     bool hasActiveActions() const;
+    void setAdminBridge(AdminBridge* bridge) {
+        admin_ = bridge;
+    }
   Q_SIGNALS:
     void failed(const QString& message);
     void recognized(const QString& directions, const QString& action);
@@ -33,6 +37,7 @@ class GestureController final : public QObject {
     GestureRules rules_;
     GestureInput input_;
     GestureActions actions_;
+    AdminBridge* admin_ = nullptr;
     std::unique_ptr<ShellJobs> jobs_;
     std::vector<std::unique_ptr<GestureOverlay>> overlays_;
     quint64 displayedStroke_ = 0;

@@ -46,6 +46,7 @@ struct SettingsDialog::Impl {
     QLineEdit* password = nullptr;
     GestureSettings* gestures = nullptr;
     QLabel* updateStatus = nullptr;
+    QLabel* integrationStatus = nullptr;
     QPushButton *checkUpdate = nullptr, *installUpdate = nullptr, *cancelUpdate = nullptr;
     Impl(SettingsDialog* owner, Theme& t, const Settings& initial, Apply a, QString path)
         : q(owner), theme(t), saved(initial), draft(initial), apply(std::move(a)),
@@ -227,12 +228,20 @@ struct SettingsDialog::Impl {
 void SettingsDialog::Impl::buildGeneral() {
     auto* layout = scroll(page(QStringLiteral("常规"), QStringLiteral("启动方式与数据位置。")));
     auto* box = card(layout, QStringLiteral("启动与运行"));
-    auto* startup = new Switch(theme, QStringLiteral("开机启动"));
-    startup->setEnabled(false);
-    startup->setToolTip(QStringLiteral("开发阶段暂不接管开机启动"));
-    row(box, QStringLiteral("开机启动"), QStringLiteral("开发阶段暂不接管开机启动。"), startup);
+    row(box, QStringLiteral("开机启动"),
+        QStringLiteral("登录 Windows 后启动 MT，使用当前数据目录。"),
+        toggle(&Settings::autoStart, "autoStart", QStringLiteral("开机启动")));
     row(box, QStringLiteral("启动时隐藏面板"), QStringLiteral("在系统托盘中运行，使用快捷键唤起。"),
         toggle(&Settings::startHidden, "startHidden", QStringLiteral("启动时隐藏面板")));
+    row(box, QStringLiteral("管理员窗口支持"),
+        QStringLiteral("允许向管理员程序回贴和执行手势。每次启动需确认 Windows 权限提示。"),
+        toggle(&Settings::adminSupport, "adminSupport", QStringLiteral("管理员窗口支持")));
+    integrationStatus = label(QStringLiteral("未启用管理员支持"), "SettingsDescription");
+    integrationStatus->setWordWrap(true);
+    auto* integrationPadding = new QHBoxLayout;
+    integrationPadding->setContentsMargins(16, 0, 16, 12);
+    integrationPadding->addWidget(integrationStatus);
+    box->addLayout(integrationPadding);
     box = card(layout, QStringLiteral("数据位置"));
     row(box, QStringLiteral("设置与功能数据"), QStringLiteral("当前实例使用以下目录。"), nullptr);
     auto* path = new QLineEdit(QDir::toNativeSeparators(root));
@@ -877,5 +886,12 @@ void SettingsDialog::closeEvent(QCloseEvent* event) {
         event->ignore();
         reject();
     }
+}
+void SettingsDialog::setSystemIntegrationStatus(bool preview, const QString& message) {
+    for (const auto* name : {"autoStart", "adminSupport"})
+        if (auto* control = findChild<QWidget*>(QString::fromLatin1(name)))
+            control->setEnabled(!preview);
+    d->integrationStatus->setText(
+        preview ? QStringLiteral("隔离预览不修改开机启动，也不申请管理员权限。") : message);
 }
 } // namespace mt

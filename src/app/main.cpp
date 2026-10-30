@@ -1,6 +1,7 @@
 #include "Application.h"
-#include "infrastructure/i18n/I18n.h"
 #include "BuildInfo.h"
+#include "infrastructure/i18n/I18n.h"
+#include "platform/windows/AdminBridge.h"
 #include "platform/windows/UpdateInstaller.h"
 #include <QApplication>
 #include <QCommandLineParser>
@@ -32,6 +33,11 @@ int main(int argc, char** argv) {
     QCommandLineOption shellHelper(QStringLiteral("shell-helper"));
     shellHelper.setFlags(QCommandLineOption::HiddenFromHelp);
     parser.addOption(shellHelper);
+    for (const auto* name : {"admin-helper", "admin-parent", "admin-started"}) {
+        QCommandLineOption option(QString::fromLatin1(name), QString{}, QStringLiteral("value"));
+        option.setFlags(QCommandLineOption::HiddenFromHelp);
+        parser.addOption(option);
+    }
     QCommandLineOption applyUpdate(QStringLiteral("apply-update"), QStringLiteral("安装已验证的更新"), QStringLiteral("plan"));
     applyUpdate.setFlags(QCommandLineOption::HiddenFromHelp);
     parser.addOption(applyUpdate);
@@ -52,6 +58,11 @@ int main(int argc, char** argv) {
                       QStringLiteral("在指定毫秒数后退出"),
                       QStringLiteral("milliseconds")});
     parser.process(app);
+    if (parser.isSet(QStringLiteral("admin-helper")))
+        return mt::runAdminHelper(parser.value(QStringLiteral("admin-helper")),
+                                  parser.value(QStringLiteral("admin-parent")).toUInt(),
+                                  parser.value(QStringLiteral("admin-started")).toULongLong(),
+                                  parser.isSet(QStringLiteral("preview")));
     if (parser.isSet(applyUpdate))
         return mt::runUpdateInstaller(parser.value(applyUpdate), parser.isSet(QStringLiteral("preview")));
     if (parser.isSet(QStringLiteral("shell-helper")))

@@ -9,6 +9,8 @@ struct Settings {
     QString theme = QStringLiteral("dark"); // dark | light | auto (follow Windows)
     bool startHidden = true;
     bool autoCheckUpdates = true;
+    bool autoStart = false;
+    bool adminSupport = false;
     bool clipboardEnabled = true;
     bool launcherEnabled = true;
     bool gesturesEnabled = false;

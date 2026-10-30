@@ -16,6 +16,7 @@ class SettingsDialog final : public QDialog {
     void reject() override;
     bool hasUnsavedChanges() const;
     void showUpdatePage();
+    void setSystemIntegrationStatus(bool preview, const QString& message);
     void setUpdateStatus(const QString& message, bool canCheck, bool canUpdate,
                          bool ready, bool canCancel);
 

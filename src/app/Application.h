@@ -20,6 +20,8 @@ class SettingsDialog;
 class ScreenLockService;
 class GestureController;
 class UpdateService;
+class StartupRegistration;
+class AdminBridge;
 class Application final : public QObject {
     Q_OBJECT
   public:
@@ -74,6 +76,8 @@ class Application final : public QObject {
     std::unique_ptr<ScreenLockService> screenLock_;
     std::unique_ptr<GestureController> gestures_;
     std::unique_ptr<UpdateService> updates_;
+    std::unique_ptr<StartupRegistration> startup_;
+    std::unique_ptr<AdminBridge> admin_;
     bool updateInstalling_ = false;
     QString notifiedUpdateVersion_;
     QPointer<QObject> pasteOperation_;

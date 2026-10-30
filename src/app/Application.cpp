@@ -1,18 +1,20 @@
 #include "Application.h"
-#include "infrastructure/updates/UpdateService.h"
-#include "platform/windows/UpdateInstaller.h"
-#include "GestureController.h"
 #include "BuildInfo.h"
+#include "GestureController.h"
+#include "infrastructure/i18n/I18n.h"
+#include "infrastructure/storage/HLaunchImport.h"
+#include "infrastructure/updates/UpdateService.h"
 #include "modules/clipboard/ClipboardPanel.h"
 #include "modules/clipboard/ClipboardService.h"
 #include "modules/clipboard/ClipboardText.h"
-#include "infrastructure/i18n/I18n.h"
-#include "infrastructure/storage/HLaunchImport.h"
 #include "modules/launcher/LauncherPanel.h"
 #include "modules/launcher/LauncherService.h"
 #include "modules/screen_lock/ScreenLockService.h"
 #include "modules/screen_lock/UnlockPolicy.h"
+#include "platform/windows/AdminBridge.h"
 #include "platform/windows/LockPassword.h"
+#include "platform/windows/StartupRegistration.h"
+#include "platform/windows/UpdateInstaller.h"
 #include "ui/components/Placement.h"
 #include "ui/shell/SettingsDialog.h"
 #include <QApplication>
@@ -25,13 +27,13 @@
 #include <QFontInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLinearGradient>
 #include <QListWidget>
-#include <QStackedWidget>
 #include <QMenu>
 #include <QMessageBox>
-#include <QLinearGradient>
 #include <QPainter>
 #include <QScreen>
+#include <QStackedWidget>
 #include <QStyleHints>
 #include <QTimer>
 #include <QUrl>
@@ -77,6 +79,11 @@ Application::Application(QString root, bool preview, DesktopServices& desktop)
 Application::~Application() {
     updates_.reset();
     gestures_.reset();
+    // stop() emits status while destroying the helper. Disconnect UI observers
+    // before reset() clears the owning pointer.
+    if (admin_)
+        admin_->disconnect(this);
+    admin_.reset();
     if (screenLock_)
         screenLock_->shutdown();
     (void)desktop_.capturePanelNavigation(false);
@@ -103,6 +110,21 @@ std::expected<void, QString> Application::start() {
     if (!loaded)
         return std::unexpected(loaded.error());
     settings_ = std::move(*loaded);
+    startup_ = std::make_unique<StartupRegistration>(QCoreApplication::applicationFilePath(),
+                                                     store_.root());
+    admin_ = std::make_unique<AdminBridge>();
+    connect(admin_.get(), &AdminBridge::failed, this, &Application::error);
+    connect(admin_.get(), &AdminBridge::changed, this, [this] {
+        if (settingsDialog_)
+            settingsDialog_->setSystemIntegrationStatus(preview_, admin_->status());
+    });
+    if (!preview_) {
+        const auto registered = startup_->read();
+        if (registered)
+            settings_.autoStart = *registered && **registered == startup_->command();
+        else
+            QTimer::singleShot(0, this, [this, message = registered.error()] { error(message); });
+    }
     updates_ = std::make_unique<UpdateService>(QString::fromLatin1(TOOLS_VERSION),
                                               QDir(store_.root()).filePath(QStringLiteral("updates")));
     connect(updates_.get(), &UpdateService::changed, this, &Application::refreshUpdateStatus);
@@ -167,11 +189,13 @@ std::expected<void, QString> Application::start() {
     });
     connect(qApp, &QCoreApplication::aboutToQuit, screenLock_.get(), &ScreenLockService::shutdown);
     gestures_ = std::make_unique<GestureController>(theme_, store_.root(), preview_, [this] {
-        return (screenLock_ && screenLock_->active()) || settingsBusy_ || pasteOperation_ || clipboardOpening_.has_value() ||
-            (clipboardPanel_ && clipboardPanel_->isVisible()) ||
-            QApplication::activePopupWidget() || QApplication::activeModalWidget();
+        return (screenLock_ && screenLock_->active()) || settingsBusy_ || updateInstalling_ ||
+               pasteOperation_ || clipboardOpening_.has_value() ||
+               (clipboardPanel_ && clipboardPanel_->isVisible()) ||
+               QApplication::activePopupWidget() || QApplication::activeModalWidget();
     });
     connect(gestures_.get(), &GestureController::failed, this, &Application::error);
+    gestures_->setAdminBridge(admin_.get());
     if (auto result = gestures_->configure(settings_); !result) {
         settings_.gesturesEnabled = false;
         QTimer::singleShot(500, this, [this, message = result.error()] { error(message); });
@@ -181,7 +205,7 @@ std::expected<void, QString> Application::start() {
     tray_.setToolTip(
         QStringLiteral("MT %1%2")
             .arg(QString::fromLatin1(TOOLS_VERSION),
-                 preview_ ? tx(u" · 隔离预览") : tx(u" · 开发版")));
+                 preview_ ? tx(u" · 隔离预览") : QString{}));
     tray_.show();
     connect(&tray_, &QSystemTrayIcon::activated, this,
             [this](QSystemTrayIcon::ActivationReason reason) {
@@ -219,6 +243,24 @@ std::expected<void, QString> Application::start() {
             if (!visible && settings_.clipboardSuppressFullscreen &&
                 DesktopServices::foregroundFullscreen())
                 return;
+            if (!visible && settings_.adminSupport && admin_->ready()) {
+                if (admin_->busy())
+                    return;
+                const auto target = DesktopServices::foreground();
+                const auto generation = pasteGeneration_;
+                if (target.handle) {
+                    admin_->suppressAltMenu(target, this, [this, target, generation](auto result) {
+                        if (generation != pasteGeneration_ ||
+                            !DesktopServices::isForeground(target) || screenLock_->active() ||
+                            settingsBusy_ || updateInstalling_)
+                            return;
+                        if (!result)
+                            error(result.error());
+                        showClipboard();
+                    });
+                    return;
+                }
+            }
             if (!visible)
                 DesktopServices::suppressAltMenu();
             showClipboard();
@@ -269,11 +311,41 @@ std::expected<void, QString> Application::start() {
         showClipboard();
     } else if (!settings_.startHidden && settings_.launcherEnabled)
         showLauncher();
+    if (!preview_ && settings_.adminSupport)
+        QTimer::singleShot(0, this, [this] {
+            admin_->start([this](auto result) {
+                if (!result)
+                    error(result.error());
+            });
+        });
     return {};
 }
 void Application::applySettings(const Settings& next, SettingsCompletion done) {
     if (!done) done = [this](auto result) { if (!result) error(result.error()); };
     if (settingsBusy_) { done(std::unexpected(tx(u"设置正在保存，请稍后重试"))); return; }
+    if (admin_ && admin_->busy()) {
+        done(std::unexpected(tx(u"管理员操作正在进行，请稍后保存设置")));
+        return;
+    }
+    if (auto valid = next.validate(); !valid) {
+        done(valid);
+        return;
+    }
+    if (screenLock_->active()) {
+        done(std::unexpected(tx(u"请先解除黑屏遮挡再修改设置")));
+        return;
+    }
+    if (!preview_ && next.adminSupport && !settings_.adminSupport && !admin_->ready()) {
+        settingsBusy_ = true;
+        admin_->start([this, next, done = std::move(done)](auto result) mutable {
+            settingsBusy_ = false;
+            if (!result)
+                done(result);
+            else
+                applySettings(next, std::move(done));
+        });
+        return;
+    }
     const bool hotkeysChanged = shortcuts(next) != shortcuts(settings_);
     const auto prepare = [&]() -> std::expected<void, QString> {
     if (auto valid = next.validate(); !valid)
@@ -300,44 +372,83 @@ void Application::applySettings(const Settings& next, SettingsCompletion done) {
     }
     return {};
     };
-    if (auto result = prepare(); !result) { done(result); return; }
-    settingsBusy_ = true;
-    launcher_->configure(store_, next, [this, next, hotkeysChanged, done = std::move(done)](auto saved) {
-        settingsBusy_ = false;
-        if (!saved) {
-            if (auto restored = gestures_->configure(settings_); !restored) error(restored.error());
-            if (!preview_ && hotkeysChanged) {
-                if (auto restored = desktop_.setHotkeys(shortcuts(settings_)); !restored) error(restored.error());
-            }
-            done(saved);
+    if (auto result = prepare(); !result) {
+        if (!settings_.adminSupport)
+            admin_->stop();
+        done(result);
+        return;
+    }
+    const bool startupChanged = !preview_ && next.autoStart != settings_.autoStart;
+    StartupRegistration::Snapshot startupBefore;
+    if (startupChanged) {
+        auto prior = startup_->read();
+        auto registered = prior ? startup_->setEnabled(next.autoStart)
+                                : std::expected<void, QString>{std::unexpected(prior.error())};
+        if (!registered) {
+            (void)gestures_->configure(settings_);
+            if (hotkeysChanged)
+                (void)desktop_.setHotkeys(shortcuts(settings_));
+            if (!settings_.adminSupport)
+                admin_->stop();
+            done(registered);
             return;
         }
-    settings_ = next;
-    if (!next.clipboardEnabled) {
-        clipboardOpening_.reset();
-        ++pasteGeneration_;
+        startupBefore = *prior;
     }
-    previewOpacity(next.launcherOpacity, next.clipboardOpacity);
-    theme_.apply(effectiveTheme());
-    clipboard_->configure(next.clipboardEnabled, next.clipboardPaused, next.storageLimit,
-                          next.historyLimit);
-    applyClipboardBehavior();
-    applyEdgeActivation();
-    if (launcherPanel_)
-        launcherPanel_->setGrid(launcher_->catalog().columns, next.launcherRows);
-    if (clipboardPanel_) {
-        clipboardPanel_->setMaskSensitive(next.maskSensitive);
-        clipboardPanel_->setPaused(next.clipboardPaused);
-        if (!next.clipboardEnabled)
-            clipboardPanel_->hide();
-    }
-    if (launcherPanel_) {
-        launcherPanel_->setPinned(next.launcherPinned);
-        if (!next.launcherEnabled)
-            launcherPanel_->hide();
-    }
-    done({});
-    });
+    settingsBusy_ = true;
+    launcher_->configure(
+        store_, next,
+        [this, next, hotkeysChanged, startupChanged, startupBefore,
+         done = std::move(done)](auto saved) {
+            settingsBusy_ = false;
+            if (!saved) {
+                if (startupChanged) {
+                    auto restored = startup_->restore(
+                        startupBefore, next.autoStart
+                                           ? StartupRegistration::Snapshot{startup_->command()}
+                                           : StartupRegistration::Snapshot{});
+                    if (!restored)
+                        error(restored.error());
+                }
+                if (!settings_.adminSupport)
+                    admin_->stop();
+                if (auto restored = gestures_->configure(settings_); !restored)
+                    error(restored.error());
+                if (!preview_ && hotkeysChanged) {
+                    if (auto restored = desktop_.setHotkeys(shortcuts(settings_)); !restored)
+                        error(restored.error());
+                }
+                done(saved);
+                return;
+            }
+            settings_ = next;
+            if (!next.adminSupport)
+                admin_->stop();
+            if (!next.clipboardEnabled) {
+                clipboardOpening_.reset();
+                ++pasteGeneration_;
+            }
+            previewOpacity(next.launcherOpacity, next.clipboardOpacity);
+            theme_.apply(effectiveTheme());
+            clipboard_->configure(next.clipboardEnabled, next.clipboardPaused, next.storageLimit,
+                                  next.historyLimit);
+            applyClipboardBehavior();
+            applyEdgeActivation();
+            if (launcherPanel_)
+                launcherPanel_->setGrid(launcher_->catalog().columns, next.launcherRows);
+            if (clipboardPanel_) {
+                clipboardPanel_->setMaskSensitive(next.maskSensitive);
+                clipboardPanel_->setPaused(next.clipboardPaused);
+                if (!next.clipboardEnabled)
+                    clipboardPanel_->hide();
+            }
+            if (launcherPanel_) {
+                launcherPanel_->setPinned(next.launcherPinned);
+                if (!next.launcherEnabled)
+                    launcherPanel_->hide();
+            }
+            done({});
+        });
 }
 void Application::trace(const QString& message) const {
     // Tray balloons vanish; keep a small local record for diagnosis.
@@ -594,6 +705,7 @@ void Application::showSettings() {
         new SettingsDialog(theme_, settings_, store_.root(),
                            [this](const Settings& next, SettingsCompletion done) { applySettings(next, std::move(done)); });
     settingsDialog_->setAttribute(Qt::WA_DeleteOnClose);
+    settingsDialog_->setSystemIntegrationStatus(preview_, admin_->status());
     connect(settingsDialog_, &SettingsDialog::panelOpacityPreview, this,
             &Application::previewOpacity);
     connect(settingsDialog_, &SettingsDialog::clearHistoryRequested, this,
@@ -648,9 +760,11 @@ void Application::installUpdate() {
     prompt->setAttribute(Qt::WA_DeleteOnClose);
     prompt->setDefaultButton(QMessageBox::Cancel);
     connect(prompt, &QMessageBox::finished, this, [this](int result) {
-        if (result != QMessageBox::Yes || updateInstalling_ || screenLock_->active() || settingsBusy_ ||
-            !updates_->release() || updates_->state() != UpdateService::State::Ready ||
-            !settingsDialog_ || settingsDialog_->hasUnsavedChanges()) return;
+        if (result != QMessageBox::Yes || updateInstalling_ || screenLock_->active() ||
+            settingsBusy_ || (admin_ && admin_->busy()) || !updates_->release() ||
+            updates_->state() != UpdateService::State::Ready || !settingsDialog_ ||
+            settingsDialog_->hasUnsavedChanges())
+            return;
         updateInstalling_ = true;
         refreshUpdateStatus();
         const auto& release = *updates_->release();
@@ -679,6 +793,17 @@ void Application::installUpdate() {
             } else if (QFile::exists(QDir(folder).filePath(QStringLiteral("ready")))) {
                 timer->stop();
                 timer->deleteLater();
+                // The elevated copy uses this same EXE and must release it before
+                // the installer can replace the file after our exit.
+                if (admin_ && !admin_->stop()) {
+                    QFile cancelled(QDir(folder).filePath(QStringLiteral("cancelled")));
+                    if (cancelled.open(QIODevice::WriteOnly))
+                        cancelled.write("cancelled");
+                    updateInstalling_ = false;
+                    refreshUpdateStatus();
+                    error(QStringLiteral("管理员辅助进程尚未退出，已取消安装，请稍后重试"));
+                    return;
+                }
                 qApp->quit();
             }
         });
@@ -724,6 +849,14 @@ void Application::import(QStringList paths, QString category, int slot) {
     });
 }
 void Application::paste(ClipboardRecord record, bool plain, WindowTarget target) {
+    if (admin_ && admin_->busy()) {
+        error(tx(u"管理员操作正在进行，本次回贴已取消"));
+        return;
+    }
+    if (plain && record.kind == ClipKind::Formats) {
+        error(tx(u"该内容没有纯文本格式，请使用普通粘贴"));
+        return;
+    }
     if (screenLock_ && screenLock_->active())
         return;
     if (preview_) {
@@ -790,7 +923,16 @@ void Application::paste(ClipboardRecord record, bool plain, WindowTarget target)
                 }
                 timer->stop();
                 timer->deleteLater();
-                if (auto result = DesktopServices::sendPaste(target); !result)
+                if (settings_.adminSupport && admin_ && admin_->ready()) {
+                    admin_->paste(target, this, [this, id = record.id, generation](auto result) {
+                        if (generation != pasteGeneration_)
+                            return;
+                        if (!result)
+                            error(result.error());
+                        else
+                            clipboard_->touch(id);
+                    });
+                } else if (auto result = DesktopServices::sendPaste(target); !result)
                     error(result.error());
                 else
                     clipboard_->touch(record.id);
@@ -803,7 +945,8 @@ void Application::lockScreen() {
         return;
     // A Shell request already handed to another process cannot be recalled
     // atomically. Wait for its bounded result before promising a locked desktop.
-    if (shellJobs_.hasActiveActions() || (gestures_ && gestures_->hasActiveActions())) {
+    if (shellJobs_.hasActiveActions() || (admin_ && admin_->busy()) ||
+        (gestures_ && gestures_->hasActiveActions())) {
         error(tx(u"正在完成启动或导入请求，请稍后锁定"));
         return;
     }

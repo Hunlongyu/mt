@@ -252,6 +252,10 @@ void ClipboardService::mutate(std::function<std::expected<void, QString>(Clipboa
         Qt::QueuedConnection);
 }
 bool ClipboardService::write(const ClipboardRecord& record, bool plain) {
+    if (plain && record.kind == ClipKind::Formats) {
+        Q_EMIT failed(tx(u"该内容没有纯文本格式，请使用普通粘贴"));
+        return false;
+    }
     auto data = record.mime(plain);
     data->setData(QStringLiteral("application/x-mt-writeback"), ownMarker_.toUtf8());
     auto* clipboard = QGuiApplication::clipboard();

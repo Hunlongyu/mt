@@ -124,16 +124,28 @@ std::expected<Settings, QString> Settings::decode(const QByteArray& data) {
     auto s = defaults();
     s.extra = o;
     // Reject malformed present values instead of silently resetting user settings.
-    const QStringList bools{
-        QStringLiteral("startHidden"), QStringLiteral("autoCheckUpdates"), QStringLiteral("clipboardEnabled"), QStringLiteral("launcherEnabled"),
-        QStringLiteral("gesturesEnabled"),  QStringLiteral("lockEnabled"), QStringLiteral("lockPaused"),
-        QStringLiteral("clipboardPaused"),  QStringLiteral("maskSensitive"),
-        QStringLiteral("launcherPinned"),   QStringLiteral("requirePassword"),
-        QStringLiteral("gestureTrail"),     QStringLiteral("disableGesturesFullscreen"),
-        QStringLiteral("gestureShowName"),
-        QStringLiteral("pasteOnConfirm"),   QStringLiteral("clipboardSuppressFullscreen"),
-        QStringLiteral("hoverPreview"),     QStringLiteral("spacePreview"),
-        QStringLiteral("launcherEdgeEnabled"), QStringLiteral("launcherEdgeSuppressFullscreen")};
+    const QStringList bools{QStringLiteral("startHidden"),
+                            QStringLiteral("autoCheckUpdates"),
+                            QStringLiteral("autoStart"),
+                            QStringLiteral("adminSupport"),
+                            QStringLiteral("clipboardEnabled"),
+                            QStringLiteral("launcherEnabled"),
+                            QStringLiteral("gesturesEnabled"),
+                            QStringLiteral("lockEnabled"),
+                            QStringLiteral("lockPaused"),
+                            QStringLiteral("clipboardPaused"),
+                            QStringLiteral("maskSensitive"),
+                            QStringLiteral("launcherPinned"),
+                            QStringLiteral("requirePassword"),
+                            QStringLiteral("gestureTrail"),
+                            QStringLiteral("disableGesturesFullscreen"),
+                            QStringLiteral("gestureShowName"),
+                            QStringLiteral("pasteOnConfirm"),
+                            QStringLiteral("clipboardSuppressFullscreen"),
+                            QStringLiteral("hoverPreview"),
+                            QStringLiteral("spacePreview"),
+                            QStringLiteral("launcherEdgeEnabled"),
+                            QStringLiteral("launcherEdgeSuppressFullscreen")};
     for (const auto& k : bools)
         if (o.contains(k) && !o[k].isBool())
             return std::unexpected(tx(u"配置类型错误：%1").arg(k));
@@ -142,6 +154,8 @@ std::expected<Settings, QString> Settings::decode(const QByteArray& data) {
 #define LOAD_TEXT(name) s.name = o.value(QStringLiteral(#name)).toString(s.name)
     LOAD_BOOL(startHidden);
     LOAD_BOOL(autoCheckUpdates);
+    LOAD_BOOL(autoStart);
+    LOAD_BOOL(adminSupport);
     LOAD_BOOL(clipboardEnabled);
     LOAD_BOOL(launcherEnabled);
     LOAD_BOOL(gesturesEnabled);
@@ -234,6 +248,8 @@ QByteArray Settings::encode() const {
     SAVE(maskSensitive);
     SAVE(startHidden);
     SAVE(autoCheckUpdates);
+    SAVE(autoStart);
+    SAVE(adminSupport);
     SAVE(historyLimit);
     SAVE(storageLimit);
     SAVE(pasteOnConfirm);

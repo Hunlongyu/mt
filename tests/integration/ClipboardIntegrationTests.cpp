@@ -46,6 +46,19 @@ class ClipboardIntegrationTests final : public QObject {
     void initTestCase() {
         qApp->setQuitOnLastWindowClosed(false);
     }
+    void hostCanExitWithSystemSettingsOpen() {
+        QTemporaryDir dir;
+        DesktopServices desktop(dir.path());
+        auto app = std::make_unique<Application>(dir.path(), true, desktop);
+        QVERIFY(app->start());
+        app->showSettings();
+        QPointer<SettingsDialog> settings = app->settingsDialog_;
+        QVERIFY(settings);
+        QVERIFY(!settings->findChild<QWidget*>(QStringLiteral("autoStart"))->isEnabled());
+        QVERIFY(!settings->findChild<QWidget*>(QStringLiteral("adminSupport"))->isEnabled());
+        app.reset();
+        QVERIFY(settings.isNull());
+    }
     void emptyHtmlFallsBackWithoutPollutingHistory() {
         QMimeData mime;
         mime.setHtml(QStringLiteral(""));

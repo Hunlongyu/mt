@@ -32,19 +32,44 @@ std::expected<void, QString> ClipboardStore::open() {
     if (!q.exec(QStringLiteral("PRAGMA user_version")) || !q.next())
         return std::unexpected(q.lastError().text());
     const int version = q.value(0).toInt();
-    if (version != 0 && version != 1)
+    if (version < 0 || version > 2)
         return std::unexpected(tx(u"不支持此历史数据库版本，已保留原文件"));
+    if (version == 0) {
+        if (!q.exec(QStringLiteral("SELECT name FROM sqlite_master WHERE type='table' AND name NOT "
+                                   "LIKE 'sqlite_%' LIMIT 1")))
+            return std::unexpected(q.lastError().text());
+        if (q.next())
+            return std::unexpected(tx(u"历史数据库缺少版本标记，已保留原文件，未初始化或升级"));
+    }
     if (!q.exec(QStringLiteral("PRAGMA journal_mode=WAL")))
+        return std::unexpected(q.lastError().text());
+    q.finish();
+    if (version == 1) {
+        // SQLite includes committed WAL content in this consistent backup.
+        q.prepare(QStringLiteral("VACUUM INTO ?"));
+        q.addBindValue(path_ + QStringLiteral(".schema1-") +
+                       QUuid::createUuid().toString(QUuid::WithoutBraces) + QStringLiteral(".bak"));
+        if (!q.exec())
+            return std::unexpected(q.lastError().text());
+        q.finish();
+    }
+    if (!db_.transaction())
+        return std::unexpected(db_.lastError().text());
+    auto rollback = qScopeGuard([this] { db_.rollback(); });
+    if (version == 1 &&
+        !q.exec(QStringLiteral("ALTER TABLE clips ADD COLUMN formats BLOB NOT NULL DEFAULT '{}'")))
         return std::unexpected(q.lastError().text());
     if (!q.exec(QStringLiteral(
             "CREATE TABLE IF NOT EXISTS clips (id TEXT PRIMARY KEY, kind INTEGER NOT NULL, text "
             "TEXT NOT NULL, html TEXT NOT NULL, files TEXT NOT NULL, image BLOB, source TEXT NOT "
             "NULL, captured INTEGER NOT NULL, favorite INTEGER NOT NULL DEFAULT 0, pinned INTEGER "
-            "NOT NULL DEFAULT 0, sensitive INTEGER NOT NULL DEFAULT 0, thumbnail BLOB)")) ||
+            "NOT NULL DEFAULT 0, sensitive INTEGER NOT NULL DEFAULT 0, thumbnail BLOB, "
+            "formats BLOB NOT NULL DEFAULT '{}')")) ||
         !q.exec(QStringLiteral(
             "CREATE INDEX IF NOT EXISTS clips_order ON clips(pinned DESC, captured DESC)")) ||
-        !q.exec(QStringLiteral("PRAGMA user_version=1")))
+        !q.exec(QStringLiteral("PRAGMA user_version=2")) || !db_.commit())
         return std::unexpected(q.lastError().text());
+    rollback.dismiss();
     return {};
 }
 namespace {
@@ -52,12 +77,12 @@ namespace {
 // copy is newer and never clear a flag the user set on either side.
 constexpr auto upsertCapture =
     "INSERT INTO clips(id,kind,text,html,files,image,source,captured,favorite,pinned,sensitive,"
-    "thumbnail) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+    "thumbnail,formats) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
     "captured=excluded.captured,source=excluded.source,"
     "sensitive=MAX(clips.sensitive,excluded.sensitive)";
 constexpr auto upsertImport =
     "INSERT INTO clips(id,kind,text,html,files,image,source,captured,favorite,pinned,sensitive,"
-    "thumbnail) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+    "thumbnail,formats) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
     "captured=MAX(clips.captured,excluded.captured),favorite=MAX(clips.favorite,excluded.favorite),"
     "pinned=MAX(clips.pinned,excluded.pinned),sensitive=MAX(clips.sensitive,excluded.sensitive)";
 } // namespace
@@ -96,6 +121,7 @@ std::expected<void, QString> ClipboardStore::insert(QSqlQuery& q, const Clipboar
     q.addBindValue(r.pinned);
     q.addBindValue(r.sensitive);
     q.addBindValue(r.thumbnail);
+    q.addBindValue(r.encodeFormats());
     if (!q.exec())
         return std::unexpected(q.lastError().text());
     return {};
@@ -165,7 +191,7 @@ std::expected<ClipboardRecords, QString> ClipboardStore::records(const QString& 
     QSqlQuery q(db_);
     QString where = QStringLiteral(" WHERE 1=1");
     if (filter == 0)
-        where += QStringLiteral(" AND kind IN (0,1)");
+        where += QStringLiteral(" AND kind IN (0,1,4)");
     if (filter == 1)
         where += QStringLiteral(" AND kind=2");
     if (filter == 2)
@@ -252,7 +278,8 @@ std::expected<void, QString> ClipboardStore::remove(const QString& id) {
 std::expected<ClipboardRecord, QString> ClipboardStore::record(const QString& id) const {
     QSqlQuery q(db_);
     q.prepare(QStringLiteral(
-        "SELECT id,kind,text,html,files,image,source,captured,favorite,pinned,sensitive FROM clips "
+        "SELECT id,kind,text,html,files,image,source,captured,favorite,pinned,sensitive,formats "
+        "FROM clips "
         "WHERE id=?"));
     q.addBindValue(id);
     if (!q.exec())
@@ -272,6 +299,10 @@ std::expected<ClipboardRecord, QString> ClipboardStore::record(const QString& id
     r.favorite = q.value(8).toBool();
     r.pinned = q.value(9).toBool();
     r.sensitive = q.value(10).toBool();
+    if (auto formats = r.decodeFormats(q.value(11).toByteArray()); !formats)
+        return std::unexpected(formats.error());
+    if (auto valid = r.validate(); !valid)
+        return std::unexpected(valid.error());
     return r;
 }
 } // namespace mt

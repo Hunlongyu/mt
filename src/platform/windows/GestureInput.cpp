@@ -16,8 +16,8 @@
 namespace mt {
 namespace {
 HWND hwnd(WindowTarget target) { return reinterpret_cast<HWND>(target.handle); }
-// UIPI is checked before swallowing a press: higher-integrity windows retain
-// their original mouse stream instead of depending on a denied replay.
+// Higher-integrity presses require a connected helper for both actions and
+// ordinary click replay; unknown/system integrity is never admitted.
 DWORD integrity(DWORD pid) {
     wil::unique_handle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
     HANDLE raw = nullptr;
@@ -73,6 +73,7 @@ struct GestureInput::Impl final : QObject {
         HWND foreground = nullptr;
         QString process;
         quint64 generation = 0, cancellation = 0, stroke = 0;
+        bool admin = false;
     };
     static constexpr size_t completionLimit = 4;
     std::array<FinishedStroke, completionLimit> finishedStrokes;
@@ -83,6 +84,7 @@ struct GestureInput::Impl final : QObject {
     QString candidateProcess, targetProcess;
     DWORD ownIntegrity = MAXDWORD;
     bool permitted = false, hookErrorReported = false;
+    bool candidateAdmin = false, targetAdmin = false;
     quint64 generation = 0, captureGeneration = 0, captureCancellation = 0, stroke = 0, published = 0;
     quint64 begun = 0, renewed = 0, gated = 0;
     std::mutex deliveryMutex;
@@ -166,7 +168,11 @@ struct GestureInput::Impl final : QObject {
         candidate.focusedControl = 0; // the gesture owns a window, not a caret
         if (!candidate.handle || !candidate.processStarted || candidate.processId == GetCurrentProcessId()) return;
         candidateProcess = DesktopServices::processName(candidate);
-        permitted = ownIntegrity != MAXDWORD && integrity(candidate.processId) <= ownIntegrity &&
+        const auto level = integrity(candidate.processId);
+        candidateAdmin = level > ownIntegrity;
+        permitted = ownIntegrity != MAXDWORD && level != MAXDWORD &&
+                    level <= SECURITY_MANDATORY_HIGH_RID &&
+                    (!candidateAdmin || owner->adminAvailable_.load()) &&
                     options.rules.permits(candidateProcess);
     }
     bool admit(POINT point, quint64 now) {
@@ -180,7 +186,8 @@ struct GestureInput::Impl final : QObject {
             gate(point);
             gated = now;
         }
-        return permitted && !(options.suppressFullscreen && DesktopServices::windowFullscreen(candidate.handle));
+        return permitted && (!candidateAdmin || owner->adminAvailable_.load()) &&
+               !(options.suppressFullscreen && DesktopServices::windowFullscreen(candidate.handle));
     }
     void finishCapture() {
         // Fixed storage in the callback; even an overrun keeps owning every
@@ -198,6 +205,7 @@ struct GestureInput::Impl final : QObject {
         finished.generation = captureGeneration;
         finished.cancellation = captureCancellation;
         finished.stroke = stroke;
+        finished.admin = targetAdmin;
         ++finishedCount;
         capture.reset();
     }
@@ -236,6 +244,7 @@ struct GestureInput::Impl final : QObject {
         const auto now = GetTickCount64();
         if (capture.held()) {
             if (owner->blocked_.load() || owner->cancellation() != captureCancellation ||
+                (targetAdmin && !owner->adminAvailable_.load()) ||
                 GetForegroundWindow() != foregroundAtStart)
                 capture.cancel();
             else if (!options.enabled)
@@ -255,9 +264,25 @@ struct GestureInput::Impl final : QObject {
                 const auto delta = QPoint(pointer.x, pointer.y) - finished.capture.points().back();
                 if (DesktopServices::validTarget(finished.target) &&
                     GetForegroundWindow() == finished.foreground &&
-                    ownerAt(pointer) == hwnd(finished.target) &&
-                    delta.manhattanLength() <= 8 && !replay(finished.button))
-                    report(tx(u"系统拒绝恢复鼠标点击"));
+                    ownerAt(pointer) == hwnd(finished.target) && delta.manhattanLength() <= 8) {
+                    if (finished.admin) {
+                        const auto key = finished.button.x == XBUTTON1   ? QStringLiteral("x1")
+                                         : finished.button.x == XBUTTON2 ? QStringLiteral("x2")
+                                         : finished.button.vk == VK_MBUTTON
+                                             ? QStringLiteral("middle")
+                                             : QStringLiteral("right");
+                        QMetaObject::invokeMethod(
+                            owner,
+                            [o = owner, finished, key, pointer] {
+                                Q_EMIT o->clickReplayRequested(
+                                    finished.target, quintptr(finished.foreground),
+                                    QPoint(pointer.x, pointer.y), key, finished.generation,
+                                    finished.cancellation);
+                            },
+                            Qt::QueuedConnection);
+                    } else if (!replay(finished.button))
+                        report(tx(u"系统拒绝恢复鼠标点击"));
+                }
             }
             publish(snapshot(finished.capture, finished.target, finished.foreground, finished.process,
                              finished.generation, finished.cancellation, finished.stroke, true));
@@ -336,6 +361,7 @@ struct GestureInput::Impl final : QObject {
                        DesktopServices::modifiersReleased() &&
                        self->admit(e.pt, now)) {
                 self->target = self->candidate;
+                self->targetAdmin = self->candidateAdmin;
                 self->foregroundAtStart = GetForegroundWindow();
                 self->captureGeneration = self->generation;
                 self->captureCancellation = self->owner->cancellation();
@@ -366,7 +392,10 @@ struct GestureInput::Impl final : QObject {
         if (timer) timer->stop();
         // At process exit there is no callback left to swallow the eventual Up.
         // Hand ownership back with a tagged Down (and Up if already released).
-        if (capture.held()) replay(capturedButton, !(GetAsyncKeyState(capturedButton.vk) & 0x8000));
+        // A privileged press has not injected any Down. Cancel it on teardown;
+        // do not synthesize an unmatched privileged button while the helper exits.
+        if (capture.held() && !targetAdmin)
+            replay(capturedButton, !(GetAsyncKeyState(capturedButton.vk) & 0x8000));
         mouseHook.reset();
         keyboardHook.reset();
         current = nullptr;
