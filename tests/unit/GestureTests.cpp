@@ -7,6 +7,7 @@
 #include "modules/gestures/GestureRecognizer.h"
 #include "modules/gestures/GestureRules.h"
 #include "platform/windows/GestureActions.h"
+#include "platform/windows/AdminBridge.h"
 #include "platform/windows/InputTag.h"
 #include "ui/components/Theme.h"
 #include "ui/shell/GestureSettings.h"
@@ -65,13 +66,15 @@ int colorPixels(const QImage& image, QColor color) {
 }
 }
 
-// A separate process is essential: the input gate deliberately excludes mt's
-// own windows. It receives only test keystrokes and never edits a real document.
+// External fixtures and an explicitly registered launcher fixture receive only
+// test keystrokes; no real document is edited.
 class GestureTarget final : public QWidget {
     std::unique_ptr<QWidget> secondary_;
   public:
     int downs = 0, ups = 0, actions = 0, contexts = 0, refreshes = 0, deletes = 0;
-    GestureTarget() { setWindowTitle(QStringLiteral("mt gesture test target")); resize(720, 440); }
+    GestureTarget(QWidget* parent = nullptr, Qt::WindowFlags flags = {}) : QWidget(parent, flags) {
+        setWindowTitle(QStringLiteral("mt gesture test target")); resize(720, 440);
+    }
   protected:
     bool nativeEvent(const QByteArray&, void* raw, qintptr* result) override {
         const auto* msg = static_cast<MSG*>(raw);
@@ -392,6 +395,150 @@ class GestureTests final : public QObject {
         QCOMPARE(GestureAction::parse(QStringLiteral("key:Alt+Left"))->label(), tx(u"后退"));
         QCOMPARE(GestureAction::parse(QStringLiteral("key:Ctrl+W"))->label(), tx(u"关闭标签页"));
         QCOMPARE(GestureAction::parse(QStringLiteral("cmd:toggle_maximize"))->label(), tx(u"最大化/还原"));
+    }
+    void launcherWindowGestures_data() {
+        QTest::addColumn<bool>("adminConnected");
+        QTest::newRow("ordinary") << false;
+        QTest::newRow("admin-connected-own-actions-stay-local") << true;
+    }
+    void launcherWindowGestures() {
+        if (!qEnvironmentVariableIsSet("MT_GESTURE_DESKTOP_TEST"))
+            QSKIP("Opt-in Windows input test, isolated launcher fixture only");
+        QFETCH(bool, adminConnected);
+        const auto previous = GetForegroundWindow();
+        POINT cursor{}; GetCursorPos(&cursor);
+        struct Restore {
+            HWND previous; POINT cursor;
+            ~Restore() {
+                INPUT up{}; up.type = INPUT_MOUSE; up.mi.dwFlags = MOUSEEVENTF_RIGHTUP;
+                up.mi.dwExtraInfo = ownInputTag; SendInput(1, &up, sizeof(INPUT));
+                SetCursorPos(cursor.x, cursor.y);
+                if (IsWindow(previous)) SetForegroundWindow(previous);
+            }
+        } restore{previous, cursor};
+        QTemporaryDir data;
+        Theme theme; theme.apply(QStringLiteral("dark"));
+        AdminBridge admin;
+        if (adminConnected) {
+            bool done = false, connected = false;
+            admin.start([&](auto result) { connected = bool(result); done = true; }, true);
+            QTRY_VERIFY_WITH_TIMEOUT(done, 6000);
+            QVERIFY(connected && admin.ready());
+        }
+        GestureTarget target;
+        target.move(120, 120); target.show();
+        GestureController controller(theme, data.path(), false, [] { return false; });
+        controller.setAdminBridge(&admin);
+        auto settings = Settings::defaults();
+        settings.gesturesEnabled = true;
+        settings.adminSupport = adminConnected;
+        settings.disableGesturesFullscreen = false;
+        settings.gestureActions = {{QStringLiteral("6"), QStringLiteral("key:Ctrl+Shift+F6")}};
+        settings.gestureApplicationActions = {};
+        settings.gestureAllowlist = {QFileInfo(QCoreApplication::applicationFilePath()).fileName()};
+        QSignalSpy matches(&controller, &GestureController::recognized);
+        QSignalSpy failures(&controller, &GestureController::failed);
+        QVERIFY(controller.configure(settings));
+        const auto activate = [](QWidget& widget) {
+            widget.raise(); widget.activateWindow();
+            const auto foregroundThread = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
+            const bool attached = foregroundThread != GetCurrentThreadId() &&
+                                  AttachThreadInput(GetCurrentThreadId(), foregroundThread, TRUE);
+            const auto window = reinterpret_cast<HWND>(widget.winId());
+            BringWindowToTop(window);
+            const bool activated = SetForegroundWindow(window);
+            if (attached) AttachThreadInput(GetCurrentThreadId(), foregroundThread, FALSE);
+            return activated;
+        };
+        activate(target);
+        QTRY_COMPARE(GetForegroundWindow(), reinterpret_cast<HWND>(target.winId()));
+        const auto mouse = [](DWORD flags) {
+            INPUT e{}; e.type = INPUT_MOUSE; e.mi.dwFlags = flags;
+            return SendInput(1, &e, sizeof(INPUT)) == 1;
+        };
+        const auto move = [](POINT point) {
+            INPUT e{}; e.type = INPUT_MOUSE;
+            e.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE |
+                           MOUSEEVENTF_VIRTUALDESK | MOUSEEVENTF_MOVE_NOCOALESCE;
+            e.mi.dx = LONG(((qint64(point.x) - GetSystemMetrics(SM_XVIRTUALSCREEN)) * 2 + 1) * 65536 /
+                          (GetSystemMetrics(SM_CXVIRTUALSCREEN) * 2));
+            e.mi.dy = LONG(((qint64(point.y) - GetSystemMetrics(SM_YVIRTUALSCREEN)) * 2 + 1) * 65536 /
+                          (GetSystemMetrics(SM_CYVIRTUALSCREEN) * 2));
+            return SendInput(1, &e, sizeof(INPUT)) == 1;
+        };
+        const auto stroke = [&](QWidget& widget, bool release = true) {
+            const auto window = reinterpret_cast<HWND>(widget.winId());
+            POINT origin{100, 100};
+            if (!ClientToScreen(window, &origin) || !move(origin)) return false;
+            QTest::qWait(20);
+            if (GetForegroundWindow() != window ||
+                GetAncestor(WindowFromPoint(origin), GA_ROOT) != window || !mouse(MOUSEEVENTF_RIGHTDOWN))
+                return false;
+            for (int i = 1; i <= 10; ++i) {
+                if (!move({origin.x + i * 12, origin.y})) return false;
+                QTest::qWait(10);
+            }
+            return !release || mouse(MOUSEEVENTF_RIGHTUP);
+        };
+        // The process is still excluded by default.
+        QVERIFY(stroke(target));
+        QTRY_COMPARE(target.ups, 1);
+        QCOMPARE(matches.size(), 0);
+        controller.setLauncherWindow(&target);
+        QVERIFY(stroke(target));
+        QTRY_COMPARE(matches.size(), 1);
+        QVERIFY2(failures.isEmpty(), failures.isEmpty() ? "" : qPrintable(failures.first().first().toString()));
+        QTRY_COMPARE(target.actions, 1);
+        QCOMPARE(target.downs, 1);
+        QCOMPARE(target.ups, 1);
+        QCOMPARE(matches.size(), 1);
+        // A stationary right click is replayed once to the original window.
+        const int contexts = target.contexts;
+        QVERIFY(mouse(MOUSEEVENTF_RIGHTDOWN));
+        QVERIFY(mouse(MOUSEEVENTF_RIGHTUP));
+        QTRY_COMPARE(target.contexts, contexts + 1);
+        QCOMPARE(target.downs, 2);
+        QCOMPARE(target.ups, 2);
+        // Owned tool windows must not inherit the main window's allowance.
+        {
+            GestureTarget owned(&target, Qt::Tool);
+            owned.move(160, 160); owned.show(); activate(owned);
+            QTRY_COMPARE(GetForegroundWindow(), reinterpret_cast<HWND>(owned.winId()));
+            QCOMPARE(GetAncestor(reinterpret_cast<HWND>(owned.winId()), GA_ROOTOWNER),
+                     reinterpret_cast<HWND>(target.winId()));
+            QVERIFY(stroke(owned));
+            QTRY_COMPARE(owned.ups, 1);
+            QCOMPARE(matches.size(), 1);
+        }
+        activate(target);
+        QTRY_COMPARE(GetForegroundWindow(), reinterpret_cast<HWND>(target.winId()));
+        QVERIFY(stroke(target, false));
+        const auto trailVisible = [] {
+            for (const auto* widget : QApplication::topLevelWidgets())
+                if (widget->objectName() == QStringLiteral("gestureOverlay") && widget->isVisible())
+                    return true;
+            return false;
+        };
+        QTRY_VERIFY(trailVisible());
+        target.hide(); target.show(); activate(target);
+        QTRY_COMPARE(GetForegroundWindow(), reinterpret_cast<HWND>(target.winId()));
+        QVERIFY(mouse(MOUSEEVENTF_RIGHTUP));
+        QTest::qWait(80);
+        QCOMPARE(matches.size(), 1); // hiding/reopening cannot revive the old stroke
+        QVERIFY(stroke(target));
+        QTRY_COMPARE(matches.size(), 2);
+        QVERIFY2(failures.isEmpty(), failures.isEmpty() ? "" : qPrintable(failures.first().first().toString()));
+        QTRY_COMPARE(target.actions, 2);
+        target.setWindowFlag(Qt::Tool, true); // recreates/reconfigures the native window
+        target.show(); activate(target);
+        QTRY_COMPARE(GetForegroundWindow(), reinterpret_cast<HWND>(target.winId()));
+        QVERIFY(stroke(target));
+        QTRY_COMPARE(target.actions, 3);
+        controller.setLauncherWindow(nullptr);
+        QVERIFY(stroke(target));
+        QTRY_COMPARE(target.ups, 3);
+        QCOMPARE(matches.size(), 3);
+        QVERIFY(failures.isEmpty());
     }
     void desktopClickStrokeCancelDisableAndTargetChange() {
         if (!qEnvironmentVariableIsSet("MT_GESTURE_DESKTOP_TEST"))
@@ -761,6 +908,14 @@ class GestureTests final : public QObject {
 };
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
+    const auto args = app.arguments();
+    if (args.contains(QStringLiteral("--admin-helper"))) {
+        const auto value = [&](const QString& name) { return args.value(args.indexOf(name) + 1); };
+        return runAdminHelper(value(QStringLiteral("--admin-helper")),
+                              value(QStringLiteral("--admin-parent")).toUInt(),
+                              value(QStringLiteral("--admin-started")).toULongLong(),
+                              args.contains(QStringLiteral("--preview")));
+    }
     app.setQuitOnLastWindowClosed(false);
     app.setStyle(QStringLiteral("Fusion"));
     app.setFont(DesktopServices::systemUiFont());

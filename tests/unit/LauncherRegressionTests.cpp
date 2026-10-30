@@ -7,10 +7,14 @@
 #include <QApplication>
 #include <QBuffer>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
+#include <QEnterEvent>
 #include <QFile>
+#include <QElapsedTimer>
+#include <QProcess>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
@@ -102,14 +106,17 @@ void activateForTest(QWidget* widget) {
 QT_WARNING_POP
 // The test executable plays the helper so ShellJobs exercises real process/pipe
 // isolation without launching Explorer, applications, or accessing real user data.
-int helper() {
-    QFile input;
-    if (!input.open(stdin, QIODevice::ReadOnly))
-        return 1;
-    const auto request = QJsonDocument::fromJson(input.readAll()).object();
+QJsonObject helperResponse(const QJsonObject& request) {
     QJsonObject response{{QStringLiteral("ok"), true}};
     if (request.value(QStringLiteral("operation")).toString() == QStringLiteral("icon")) {
-        QImage image(request.value(QStringLiteral("source")).toString());
+        const auto source = request.value(QStringLiteral("source")).toString();
+        if (source == QStringLiteral("hang"))
+            QThread::msleep(10000);
+        if (source == QStringLiteral("crash"))
+            std::exit(3);
+        if (source.startsWith(QStringLiteral("slow:")))
+            QThread::msleep(150);
+        QImage image(source.startsWith(QStringLiteral("slow:")) ? source.mid(5) : source);
         QByteArray png;
         QBuffer buffer(&png);
         buffer.open(QIODevice::WriteOnly);
@@ -122,11 +129,26 @@ int helper() {
             request.value(QStringLiteral("target")).toString() == QStringLiteral("slow");
         response[QStringLiteral("error")] = QStringLiteral("fixture reveal failure");
     }
+    return response;
+}
+int helper(bool persistentIcons = false) {
+    QFile input;
+    if (!input.open(stdin, QIODevice::ReadOnly))
+        return 1;
     QFile output;
     if (!output.open(stdout, QIODevice::WriteOnly))
         return 1;
-    const auto payload = QJsonDocument(response).toJson(QJsonDocument::Compact);
-    return output.write(payload) == payload.size() && output.flush() ? 0 : 1;
+    do {
+        const auto inputBytes = persistentIcons ? input.readLine(8 * 1024 * 1024) : input.readAll();
+        if (inputBytes.isEmpty())
+            return 0;
+        const auto response = helperResponse(QJsonDocument::fromJson(inputBytes).object());
+        const auto payload = QJsonDocument(response).toJson(QJsonDocument::Compact) +
+                             (persistentIcons ? QByteArrayLiteral("\n") : QByteArray{});
+        if (output.write(payload) != payload.size() || !output.flush())
+            return 1;
+    } while (persistentIcons);
+    return 0;
 }
 } // namespace
 class LauncherRegressionTests final : public QObject {
@@ -167,6 +189,169 @@ class LauncherRegressionTests final : public QObject {
         panel.showNear({20, 20});
         activateForTest(&panel);
         QTRY_COMPARE(QApplication::focusWidget(), selected);
+    }
+    void mousePressMovesGridFocus() {
+        QTemporaryDir dir;
+        LauncherService service(dir.filePath(QStringLiteral("launcher.json")));
+        QVERIFY(service.load());
+        const auto entry = item(QStringLiteral("mouse launch"));
+        QVERIFY(service.put(service.catalog().selectedCategory, 5, entry));
+        QTRY_VERIFY(!service.busy());
+        Theme theme;
+        LauncherPanel panel(theme, service);
+        panel.setPinned(true);
+        panel.showNear({20, 20});
+        activateForTest(&panel);
+        auto* target = tile(panel, 5);
+        QVERIFY(target);
+        const auto reset = qScopeGuard([&] { target->setDown(false); });
+        QSignalSpy launches(&panel, &LauncherPanel::launchRequested);
+        QTest::mousePress(target, Qt::LeftButton);
+        QCOMPARE(QApplication::focusWidget(), target);
+        QTest::mouseRelease(target, Qt::LeftButton);
+        QCOMPARE(launches.size(), 1);
+        QCOMPARE(qvariant_cast<LaunchItem>(launches[0][0]).id, entry.id);
+        key(QApplication::focusWidget(), Qt::Key_Right);
+        QCOMPARE(QApplication::focusWidget(), tile(panel, 6));
+    }
+    void blankSurfacesMovePanelWithoutChangingItems_data() {
+        QTest::addColumn<QString>("surface");
+        for (const auto* name : {"empty-slot", "grid-margin", "grid-gap", "footer-margin", "title"})
+            QTest::newRow(name) << QString::fromLatin1(name);
+    }
+    void blankSurfacesMovePanelWithoutChangingItems() {
+        QFETCH(QString, surface);
+        QTemporaryDir dir;
+        const auto path = dir.filePath(QStringLiteral("launcher.json"));
+        auto catalog = LauncherCatalog::empty();
+        const auto entry = item(QStringLiteral("keep this item"));
+        QVERIFY(catalog.put(catalog.categoryIndex(catalog.selectedCategory), 0, entry));
+        QVERIFY(catalog.save(path));
+        const auto originalData = bytes(path);
+        LauncherService service(path);
+        QVERIFY(service.load());
+        Theme theme;
+        LauncherPanel panel(theme, service);
+        panel.setPinned(true);
+        panel.showNear({80, 60});
+        activateForTest(&panel);
+        key(&panel, Qt::Key_F, Qt::ControlModifier);
+        auto* search = panel.findChild<QLineEdit*>();
+        QVERIFY(search && search->window()->isVisible());
+        auto* popup = search->window();
+        QWidget* target = tile(panel, 1);
+        QPoint local = target->rect().center();
+        if (surface.startsWith(QStringLiteral("grid-"))) {
+            target = target->parentWidget();
+            local = surface == QStringLiteral("grid-margin") ? QPoint(4, 4)
+                : QPoint(tile(panel, 0)->geometry().right() + 2, tile(panel, 0)->geometry().center().y());
+            QVERIFY(!target->childAt(local));
+        } else if (surface == QStringLiteral("footer-margin")) {
+            target = panel.findChild<QWidget*>(QStringLiteral("BottomBar"));
+            local = QPoint(3, target->height() / 2);
+            QVERIFY(!target->childAt(local));
+        } else if (surface == QStringLiteral("title")) {
+            target = panel.findChild<QLabel*>(QStringLiteral("PanelTitle"));
+            local = target->rect().center();
+        }
+        QVERIFY(target);
+        QSignalSpy launches(&panel, &LauncherPanel::launchRequested);
+        const auto initial = panel.pos();
+        const auto popupOffset = popup->pos() - panel.pos();
+        const auto start = target->mapToGlobal(local);
+        const QPoint delta(35, 24);
+        QTest::mousePress(target, Qt::LeftButton, {}, local);
+        for (const auto offset : {delta, delta * 2}) {
+            QMouseEvent move(QEvent::MouseMove, target->mapFromGlobal(start + offset), start + offset,
+                             Qt::NoButton, Qt::LeftButton, {});
+            QApplication::sendEvent(target, &move);
+            QCOMPARE(panel.pos(), initial + offset);
+            QCOMPARE(popup->pos() - panel.pos(), popupOffset);
+        }
+        QTest::mouseRelease(target, Qt::LeftButton, {}, target->mapFromGlobal(start + delta * 2));
+        QMouseEvent hover(QEvent::MouseMove, target->mapFromGlobal(start + delta * 3), start + delta * 3,
+                          Qt::NoButton, Qt::NoButton, {});
+        QApplication::sendEvent(target, &hover);
+        QCOMPARE(panel.pos(), initial + delta * 2);
+        QCOMPARE(launches.size(), 0);
+        QCOMPARE(bytes(path), originalData);
+        QVERIFY(!tile(panel, 1)->isDown());
+    }
+    void blankDragCancelsWithItsMouseOwner_data() {
+        QTest::addColumn<QString>("reason");
+        for (const auto* name : {"release", "ungrab", "hide", "deactivate", "buttons-released", "rebuild"})
+            QTest::newRow(name) << QString::fromLatin1(name);
+    }
+    void blankDragCancelsWithItsMouseOwner() {
+        QFETCH(QString, reason);
+        QTemporaryDir dir;
+        LauncherService service(dir.filePath(QStringLiteral("launcher.json")));
+        QVERIFY(service.load());
+        Theme theme;
+        LauncherPanel panel(theme, service);
+        panel.setPinned(true);
+        panel.showNear({80, 60});
+        activateForTest(&panel);
+        auto* target = tile(panel, 1);
+        QTest::mousePress(target, Qt::LeftButton);
+        if (reason == QStringLiteral("release"))
+            QTest::mouseRelease(target, Qt::LeftButton);
+        else if (reason == QStringLiteral("ungrab")) {
+            QEvent event(QEvent::UngrabMouse);
+            QApplication::sendEvent(target, &event);
+        } else if (reason == QStringLiteral("hide")) {
+            panel.hide();
+            panel.show();
+        } else if (reason == QStringLiteral("deactivate")) {
+            QEvent event(QEvent::WindowDeactivate);
+            QApplication::sendEvent(&panel, &event);
+        } else if (reason == QStringLiteral("rebuild")) {
+            panel.setGrid(4, 8);
+            target = tile(panel, 1);
+        } else {
+            QMouseEvent hover(QEvent::MouseMove, target->rect().center(), target->mapToGlobal(target->rect().center()),
+                              Qt::NoButton, Qt::NoButton, {});
+            QApplication::sendEvent(target, &hover);
+        }
+        const auto initial = panel.pos();
+        const auto local = target->rect().center() + QPoint(40, 30);
+        QMouseEvent staleMove(QEvent::MouseMove, local, target->mapToGlobal(local), Qt::NoButton, Qt::LeftButton, {});
+        QApplication::sendEvent(target, &staleMove);
+        QCOMPARE(panel.pos(), initial);
+        QTest::mouseRelease(target, Qt::LeftButton);
+        QVERIFY(!target->isDown());
+    }
+    void lostMouseGrabClearsPressedHighlightsWithoutLaunch() {
+        QTemporaryDir dir;
+        auto catalog = LauncherCatalog::empty();
+        const auto category = catalog.categoryIndex(catalog.selectedCategory);
+        for (const int slot : {5, 9})
+            QVERIFY(catalog.put(category, slot, item(QStringLiteral("drag %1").arg(slot))));
+        const auto path = dir.filePath(QStringLiteral("launcher.json"));
+        QVERIFY(catalog.save(path));
+        LauncherService service(path);
+        QVERIFY(service.load());
+        Theme theme;
+        LauncherPanel panel(theme, service);
+        panel.setPinned(true);
+        panel.showNear({20, 20});
+        activateForTest(&panel);
+        QSignalSpy launches(&panel, &LauncherPanel::launchRequested);
+        for (const int slot : {5, 9}) {
+            auto* source = tile(panel, slot);
+            QVERIFY(source);
+            const auto reset = qScopeGuard([&] { source->setDown(false); });
+            const auto start = source->rect().center();
+            QTest::mousePress(source, Qt::LeftButton, {}, start);
+            QVERIFY(source->isDown());
+            QEvent ungrab(QEvent::UngrabMouse);
+            QApplication::sendEvent(source, &ungrab);
+            QVERIFY2(!source->isDown(), "The old mouse owner retained its pressed background");
+            QTest::mouseRelease(source, Qt::LeftButton, {}, start);
+            QCOMPARE(launches.size(), 0);
+        }
+        for (const int slot : {5, 9})
+            QVERIFY(!tile(panel, slot)->isDown());
     }
     void categoryDragSurvivesSaveBeforeRelease_data() {
         QTest::addColumn<bool>("current");
@@ -459,14 +644,82 @@ class LauncherRegressionTests final : public QObject {
         QVERIFY(tile(panel, 0)->styleSheet() != dark);
         QVERIFY(changes.count > 0);
     }
-    void panelTitleUsesProductName() {
+    void panelTitleFollowsHoveredItem_data() {
+        QTest::addColumn<QString>("mode");
+        QTest::newRow("dark") << QStringLiteral("dark");
+        QTest::newRow("light") << QStringLiteral("light");
+    }
+    void panelTitleFollowsHoveredItem() {
+        QFETCH(QString, mode);
         QTemporaryDir dir;
         LauncherService service(dir.filePath(QStringLiteral("launcher.json")));
         QVERIFY(service.load());
+        const auto category = service.catalog().selectedCategory;
+        auto entry = item(tx(u"Visual Studio Code 编辑器"));
+        QVERIFY(service.put(category, 0, entry));
+        QTRY_VERIFY(!service.busy());
         Theme theme;
+        theme.apply(mode);
         LauncherPanel panel(theme, service);
-        QCOMPARE(panel.findChild<QLabel*>(QStringLiteral("PanelTitle"))->text(),
-                 QStringLiteral("MT"));
+        panel.setPinned(true);
+        panel.showNear({20, 20});
+        activateForTest(&panel);
+        QTest::qWait(30);
+        auto* title = panel.findChild<QLabel*>(QStringLiteral("PanelTitle"));
+        QVERIFY(title);
+        const auto hover = [&panel](int slot, bool enter) {
+            auto* target = tile(panel, slot);
+            target->setAttribute(Qt::WA_UnderMouse, enter);
+            if (enter) {
+                const QPointF point = target->rect().center();
+                QEnterEvent event(point, target->mapTo(&panel, point.toPoint()),
+                                  target->mapToGlobal(point.toPoint()));
+                QApplication::sendEvent(target, &event);
+            } else {
+                QEvent event(QEvent::Leave);
+                QApplication::sendEvent(target, &event);
+            }
+        };
+        hover(0, false);
+        QVERIFY(title->text().isEmpty());
+        const QSize originalSize = panel.size();
+        const auto evidence = qEnvironmentVariable("MT_LAUNCHER_TITLE_EVIDENCE");
+        const auto capture = [&](const QString& state) {
+            if (evidence.isEmpty())
+                return true;
+            return QDir().mkpath(evidence) && panel.grab().save(QDir(evidence).filePath(
+                QStringLiteral("launcher-title-%1-%2.png").arg(state, mode)));
+        };
+        QVERIFY(capture(QStringLiteral("idle")));
+        hover(0, true);
+        QCOMPARE(title->text(), entry.name);
+        QVERIFY(tile(panel, 0)->text() != entry.name);
+        QVERIFY(capture(QStringLiteral("hover")));
+        hover(0, false);
+        QVERIFY(title->text().isEmpty());
+        hover(1, true);
+        QVERIFY(title->text().isEmpty());
+        hover(1, false);
+        hover(0, true);
+        entry.name = tx(u"<开发工具> 名称很长的启动项，用来检查标题与右侧按钮是否重叠");
+        QVERIFY(service.put(category, 0, entry));
+        QTRY_COMPARE(title->toolTip(), entry.name);
+        QCOMPARE(title->accessibleName(), entry.name);
+        QCOMPARE(title->textFormat(), Qt::PlainText);
+        QVERIFY(title->text().endsWith(QChar(0x2026)));
+        QCOMPARE(panel.size(), originalSize);
+        QVERIFY(capture(QStringLiteral("long")));
+        key(&panel, Qt::Key_PageDown);
+        QVERIFY(title->text().isEmpty());
+        key(&panel, Qt::Key_PageUp);
+        QCOMPARE(title->toolTip(), entry.name);
+        panel.hide();
+        QVERIFY(title->text().isEmpty());
+        panel.showNear({20, 20});
+        hover(0, true);
+        QVERIFY(service.erase(category, 0));
+        QTRY_VERIFY(title->text().isEmpty());
+        hover(0, false);
     }
     void lastPageCannotAddressInvalidSlots() {
         QTemporaryDir dir;
@@ -600,6 +853,7 @@ class LauncherRegressionTests final : public QObject {
         LauncherPanel panel(theme, service);
         panel.setPinned(true);
         panel.showNear({20, 20});
+        activateForTest(&panel);
         QTest::qWait(30);
         auto* tabs = panel.findChild<QTabBar*>();
         QVERIFY(tabs);
@@ -620,6 +874,81 @@ class LauncherRegressionTests final : public QObject {
         QCOMPARE(service.catalog().selectedCategory, destination);
         QCOMPARE(service.catalog().categories[1].slots[3], a.id);
         QVERIFY(service.catalog().categories[2].slots[0].isEmpty());
+        QCOMPARE(QApplication::focusWidget(), target);
+        QSignalSpy launches(&panel, &LauncherPanel::launchRequested);
+        key(QApplication::focusWidget(), Qt::Key_Return);
+        QCOMPARE(launches.size(), 1);
+        QCOMPARE(qvariant_cast<LaunchItem>(launches[0][0]).id, a.id);
+    }
+    void searchShortcutRecoversFromNoMatches_data() {
+        QTest::addColumn<QString>("mode");
+        QTest::newRow("dark") << QStringLiteral("dark");
+        QTest::newRow("light") << QStringLiteral("light");
+    }
+    void searchShortcutRecoversFromNoMatches() {
+        QFETCH(QString, mode);
+        QTemporaryDir dir;
+        LauncherService service(dir.filePath(QStringLiteral("launcher.json")));
+        QVERIFY(service.load());
+        const auto alpha = item(QStringLiteral("Alpha"));
+        QVERIFY(service.put(service.catalog().selectedCategory, 0, alpha));
+        QTRY_VERIFY(service.catalog().items.contains(alpha.id));
+        Theme theme;
+        theme.apply(mode);
+        LauncherPanel panel(theme, service);
+        panel.setPinned(true);
+        panel.showNear({20, 20});
+        activateForTest(&panel);
+        QSignalSpy launched(&panel, &LauncherPanel::launchRequested);
+        key(&panel, Qt::Key_F, Qt::ControlModifier);
+        auto* query = panel.findChild<QLineEdit*>();
+        auto* popup = query->window();
+        auto* results = panel.findChild<QListWidget*>();
+        auto* empty = popup->findChild<QLabel*>(QStringLiteral("Muted"));
+        QTRY_VERIFY(popup->isVisible() && query->hasFocus());
+        QTest::keyClicks(query, QStringLiteral("zz-no-such-launch-item"));
+        QCOMPARE(results->count(), 0);
+        QVERIFY(!results->isVisible());
+        QVERIFY(empty && empty->isVisible());
+        for (const auto key : {Qt::Key_Up, Qt::Key_Down, Qt::Key_Return})
+            QTest::keyClick(query, key);
+        QCOMPARE(launched.count(), 0);
+        const auto evidence = qEnvironmentVariable("MT_LAUNCHER_UI_EVIDENCE");
+        if (!evidence.isEmpty()) {
+            QVERIFY(QDir().mkpath(evidence));
+            QVERIFY(popup->grab().save(QDir(evidence).filePath(
+                QStringLiteral("search-empty-%1.png").arg(mode))));
+        }
+        QTest::keyClick(query, Qt::Key_Escape);
+        QVERIFY(query->text().isEmpty());
+        QVERIFY(popup->isVisible());
+        QTest::keyClicks(query, QStringLiteral("Alpha"));
+        QCOMPARE(results->count(), 1);
+        QCOMPARE(results->currentItem()->data(Qt::UserRole).toString(), alpha.id);
+        QVERIFY(results->isVisible());
+        QVERIFY(!empty->isVisible());
+        if (!evidence.isEmpty())
+            QVERIFY(popup->grab().save(QDir(evidence).filePath(
+                QStringLiteral("search-results-%1.png").arg(mode))));
+        QTest::keyClick(query, Qt::Key_Escape);
+        QTest::keyClick(query, Qt::Key_Escape);
+        QTRY_VERIFY(!popup->isVisible());
+        QVERIFY(panel.isVisible());
+        QTRY_VERIFY(tile(panel, 0)->hasFocus());
+        if (!evidence.isEmpty()) {
+            key(&panel, Qt::Key_Right);
+            tile(panel, 0)->setAttribute(Qt::WA_UnderMouse, true);
+            QVERIFY(panel.grab().save(QDir(evidence).filePath(
+                QStringLiteral("launcher-hover-%1.png").arg(mode))));
+            tile(panel, 0)->setAttribute(Qt::WA_UnderMouse, false);
+            auto* headerAction =
+                panel.findChild<QToolButton*>(QStringLiteral("LauncherHeaderAction"));
+            QVERIFY(headerAction);
+            headerAction->setAttribute(Qt::WA_UnderMouse, true);
+            QVERIFY(panel.grab().save(QDir(evidence).filePath(
+                QStringLiteral("launcher-header-hover-%1.png").arg(mode))));
+            headerAction->setAttribute(Qt::WA_UnderMouse, false);
+        }
     }
     void searchGroupHidesOnlyAfterFocusLeaves() {
         QTemporaryDir dir;
@@ -893,7 +1222,7 @@ class LauncherRegressionTests final : public QObject {
     void settingsDialogWaitsForPersistenceCompletion() {
         Theme theme;
         SettingsDialog::Completion completion;
-        SettingsDialog dialog(theme, Settings::defaults(), QStringLiteral("fixture"),
+        SettingsDialog dialog(theme, Settings::defaults(),
                               [&](const Settings&, SettingsDialog::Completion done) {
                                   completion = std::move(done);
                               });
@@ -936,6 +1265,139 @@ class LauncherRegressionTests final : public QObject {
         QTRY_COMPARE(completed, 3);
         QCOMPARE(received.pixelColor(0, 0), QColor(Qt::blue));
     }
+    void iconWorkersReuseProcessesAndKeepGuiResponsive() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath(QStringLiteral("icon.png"));
+        QImage image(32, 32, QImage::Format_ARGB32);
+        image.fill(Qt::red);
+        QVERIFY(image.save(path));
+        ShellJobs jobs;
+        int completed = 0, ticks = 0;
+        qint64 maximumGap = 0;
+        QElapsedTimer gap, elapsed;
+        gap.start(); elapsed.start();
+        QTimer heartbeat;
+        connect(&heartbeat, &QTimer::timeout, this, [&] {
+            maximumGap = qMax(maximumGap, gap.restart());
+            ++ticks;
+        });
+        heartbeat.start(5);
+        const auto callback = [&](QImage result) {
+            QCOMPARE(QThread::currentThread(), qApp->thread());
+            QCOMPARE(result.pixelColor(0, 0), QColor(Qt::red));
+            ++completed;
+        };
+        for (int i = 0; i < 28; ++i)
+            jobs.icon(QString::number(i), QStringLiteral("slow:") + path, dir.path(), callback);
+        QTRY_COMPARE_WITH_TIMEOUT(completed, 28, 6000);
+        QVERIFY(ticks > 30);
+        QVERIFY2(maximumGap < 250, qPrintable(QStringLiteral("GUI timer gap: %1 ms").arg(maximumGap)));
+        QSet<qint64> processes;
+        for (auto* process : jobs.findChildren<QProcess*>())
+            if (process->state() == QProcess::Running)
+                processes.insert(process->processId());
+        QCOMPARE(processes.size(), 3);
+        qInfo() << "28 delayed icons:" << elapsed.elapsed() << "ms; GUI ticks:" << ticks
+                << "maximum gap:" << maximumGap << "ms; workers:" << processes.size();
+        for (int i = 0; i < 8; ++i)
+            jobs.icon(QStringLiteral("next-%1").arg(i), path, dir.path(), callback);
+        QTRY_COMPARE(completed, 36);
+        for (auto* process : jobs.findChildren<QProcess*>())
+            if (process->state() == QProcess::Running)
+                QVERIFY(processes.contains(process->processId()));
+        jobs.shutdown();
+        QVERIFY(jobs.findChildren<QProcess*>().isEmpty());
+    }
+    void visibleIconsOvertakeQueuedBackgroundIcons() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath(QStringLiteral("icon.png"));
+        QImage image(4, 4, QImage::Format_ARGB32); image.fill(Qt::green);
+        QVERIFY(image.save(path));
+        ShellJobs jobs;
+        QStringList completed;
+        auto request = [&](QString id, bool slow) {
+            jobs.icon(id, (slow ? QStringLiteral("slow:") : QString{}) + path, dir.path(),
+                      [&, id](QImage result) { QVERIFY(!result.isNull()); completed.append(id); });
+        };
+        for (int i = 0; i < 3; ++i) request(QStringLiteral("active-%1").arg(i), true);
+        QTRY_COMPARE(jobs.findChildren<QProcess*>().size(), 3);
+        for (int i = 0; i < 5; ++i) request(QStringLiteral("background-%1").arg(i), true);
+        request(QStringLiteral("visible"), false);
+        jobs.prioritizeIcons({QStringLiteral("visible")});
+        QTRY_COMPARE(completed.size(), 9);
+        QVERIFY(completed.indexOf(QStringLiteral("visible")) < completed.indexOf(QStringLiteral("background-0")));
+    }
+    void hungAndCrashedIconsDoNotBlockActionsOrNextIcons() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath(QStringLiteral("icon.png"));
+        QImage image(4, 4, QImage::Format_ARGB32); image.fill(Qt::green);
+        QVERIFY(image.save(path));
+        ShellJobs jobs;
+        int failures = 0;
+        for (int i = 0; i < 3; ++i)
+            jobs.icon(QString::number(i), QStringLiteral("hang"), dir.path(),
+                      [&](QImage result) { QVERIFY(result.isNull()); ++failures; });
+        QTRY_COMPARE(jobs.findChildren<QProcess*>().size(), 3);
+        bool actionDone = false;
+        jobs.reveal(QStringLiteral("slow"), {}, [&](auto result) { QVERIFY(result); actionDone = true; });
+        QTRY_VERIFY_WITH_TIMEOUT(actionDone, 2000);
+        QCOMPARE(failures, 0);
+        QTRY_COMPARE_WITH_TIMEOUT(failures, 3, 5000);
+        jobs.icon(QStringLiteral("crash"), QStringLiteral("crash"), dir.path(),
+                  [&](QImage result) { QVERIFY(result.isNull()); ++failures; });
+        QTRY_COMPARE(failures, 4);
+        bool recovered = false;
+        jobs.icon(QStringLiteral("valid"), path, dir.path(), [&](QImage result) {
+            QCOMPARE(result.pixelColor(0, 0), QColor(Qt::green)); recovered = true;
+        });
+        QTRY_VERIFY(recovered);
+    }
+    void iconCacheEvictsColdEntriesWithoutFlushingHotIcons() {
+        QTemporaryDir dir;
+        const auto path = dir.filePath(QStringLiteral("icon.png"));
+        QImage image(4, 4, QImage::Format_ARGB32); image.fill(Qt::red);
+        QVERIFY(image.save(path));
+        ShellJobs jobs;
+        int completed = 0;
+        for (int i = 0; i < 256; ++i)
+            jobs.icon(QString::number(i), path, dir.path(), [&](QImage result) {
+                QVERIFY(!result.isNull()); ++completed;
+            });
+        QTRY_COMPARE_WITH_TIMEOUT(completed, 256, 10000);
+        jobs.icon(QStringLiteral("0"), path, dir.path(), [&](QImage result) {
+            QVERIFY(!result.isNull()); ++completed;
+        });
+        QTRY_COMPARE(completed, 257);
+        jobs.icon(QStringLiteral("new"), path, dir.path(), [&](QImage result) {
+            QVERIFY(!result.isNull()); ++completed;
+        });
+        QTRY_COMPARE(completed, 258);
+        QVERIFY(QFile::remove(path));
+        jobs.icon(QStringLiteral("0"), path, dir.path(), [&](QImage result) {
+            QVERIFY(!result.isNull()); ++completed;
+        });
+        QTRY_COMPARE(completed, 259);
+    }
+    void searchLoadsIconsFromUnvisitedCategories() {
+        QTemporaryDir dir;
+        auto catalog = LauncherCatalog::empty();
+        auto entry = item(QStringLiteral("unvisited app"));
+        QVERIFY(catalog.put(0, 0, entry));
+        const auto path = dir.filePath(QStringLiteral("launcher.json"));
+        QVERIFY(catalog.save(path));
+        LauncherService service(path); QVERIFY(service.load());
+        Theme theme;
+        LauncherPanel panel(theme, service);
+        panel.setPinned(true);
+        QSignalSpy requests(&panel, &LauncherPanel::iconRequested);
+        panel.showNear({20, 20});
+        QTest::qWait(20);
+        QCOMPARE(requests.size(), 0);
+        key(&panel, Qt::Key_F, Qt::ControlModifier);
+        panel.findChild<QLineEdit*>()->setText(QStringLiteral("unvisited"));
+        QTRY_COMPARE(requests.size(), 1);
+        QCOMPARE(requests[0][0].toString(), entry.id);
+    }
     void revealUsesHelperWithoutBlockingGuiAndReportsErrors() {
         ShellJobs jobs;
         bool completed = false, success = false;
@@ -966,9 +1428,9 @@ class LauncherRegressionTests final : public QObject {
     }
 };
 int main(int argc, char** argv) {
-    if (argc > 1 && QByteArray(argv[1]) == "--shell-helper") {
+    if (argc > 1 && (QByteArray(argv[1]) == "--shell-helper" || QByteArray(argv[1]) == "--icon-helper")) {
         QCoreApplication app(argc, argv);
-        return helper();
+        return helper(QByteArray(argv[1]) == "--icon-helper");
     }
     QApplication app(argc, argv);
     QApplication::setStyle(QStringLiteral("Fusion"));

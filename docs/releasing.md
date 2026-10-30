@@ -1,6 +1,6 @@
 # 构建与发布
 
-用户于 2026-10-30 授权提交、推送并发布首个版本 v0.1.0。后续版本仍需明确发布指令；普通推送和手动构建不会创建 Release。
+用户于 2026-10-30 授权发布首个版本 v0.1.0，随后明确要求发布包含本轮修复的 v0.1.1。后续版本仍需明确发布指令；普通推送和手动构建不会创建 Release。
 
 ## 工作流
 
@@ -14,16 +14,18 @@
 
 版本唯一来源是 `CMakeLists.txt` 中的 `project(mt VERSION X.Y.Z)`。正式标签为对应的 `vX.Y.Z`；带 `-beta.N` 等后缀的标签发布为 prerelease，不进入稳定更新通道。禁止覆盖已有标签与资产。
 
-- `mt-windows-x64.exe`：固定资产名，供更新使用。
+- `mt.exe`：固定程序文件名，供直接下载和更新使用，不追加版本、平台或架构后缀。Actions 的 `mt-windows-x64` 是产物集合名，其中的程序同样为 `mt.exe`。
 - `mt-X.Y.Z-windows-x64.zip`：EXE 与许可证。
 - `mt-X.Y.Z-source-with-dependencies.zip`：应用源码、固定 Qt 与 WIL 源码、许可证和重建脚本。
 - `SHA256SUMS.txt`：资产校验清单；应用直接核验 GitHub API 的资产 digest。
 
-确认功能范围与主分支 CI 后，在 `docs/releases/vX.Y.Z.md` 编写中文发布说明，再推送对应标签。例如首个版本：
+此命名从后续构建开始生效。已发布 v0.1.0 的程序名仍为 `mt-windows-x64.exe`，其更新检查也只识别旧名；用户需手动下载首个采用新文件名的版本一次，之后按 `mt.exe` 继续自动更新。不修改既有 Release 资产。
+
+确认功能范围与主分支 CI 后，在 `docs/releases/vX.Y.Z.md` 编写中文发布说明，再推送对应标签。例如本次补丁版本：
 
 ```powershell
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 标签工作流重新构建和验证该提交，成功后创建 Release 并上传资产。优先采用对应版本的发布说明；没有说明文件时才生成 GitHub 默认说明。发布后核对标签提交、资产 SHA-256、EXE 版本、源码材料和下载可用性，不覆盖已有版本。

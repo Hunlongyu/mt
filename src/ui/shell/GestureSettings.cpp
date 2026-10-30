@@ -330,14 +330,14 @@ GestureSettings::GestureSettings(Theme& theme, const Settings& s, QWidget* paren
     box = card(layout, QStringLiteral("视觉反馈"));
     d->trail = toggle(s.gestureTrail, QStringLiteral("显示轨迹"));
     d->name = toggle(s.gestureShowName, QStringLiteral("显示动作名称"));
-    row(box, QStringLiteral("显示轨迹"), QStringLiteral("亮蓝色轨迹、起点与方向箭头。"), d->trail);
+    row(box, QStringLiteral("显示轨迹"), {}, d->trail);
     row(box, QStringLiteral("显示动作名称"), QStringLiteral("在屏幕底部显示当前匹配的动作。"),
         d->name);
-    note(layout, QStringLiteral("按 Esc 或停顿可取消，松开触发键执行匹配的动作。"));
+    note(layout, QStringLiteral("按 Esc 取消，松开触发键执行动作。"));
     layout = tab(QStringLiteral("生效范围"));
-    box = card(layout, QStringLiteral("生效范围"));
+    box = card(layout);
     d->fullscreen = toggle(s.disableGesturesFullscreen, QStringLiteral("全屏程序中禁用"));
-    row(box, QStringLiteral("全屏程序中禁用"), QStringLiteral("减少游戏和视频中的误触。"),
+    row(box, QStringLiteral("全屏程序中禁用"), {},
         d->fullscreen);
     box = card(layout, QStringLiteral("程序规则"));
     auto* lists = fields(box);

@@ -50,7 +50,7 @@ std::expected<std::optional<UpdateRelease>, QString> parseUpdateRelease(
     std::optional<UpdateRelease> found;
     for (const auto& value : object.value(QStringLiteral("assets")).toArray()) {
         const auto asset = value.toObject();
-        if (asset.value(QStringLiteral("name")).toString() != QStringLiteral("mt-windows-x64.exe"))
+        if (asset.value(QStringLiteral("name")).toString() != QStringLiteral("mt.exe"))
             continue;
         if (found)
             return std::unexpected(QStringLiteral("发布中存在重复的更新文件"));
@@ -59,7 +59,7 @@ std::expected<std::optional<UpdateRelease>, QString> parseUpdateRelease(
         const auto matched = hash.match(digest);
         const auto bytes = asset.value(QStringLiteral("size")).toDouble(-1);
         const QUrl url(asset.value(QStringLiteral("browser_download_url")).toString());
-        const QString expectedPath = QStringLiteral("/Hunlongyu/mt/releases/download/%1/mt-windows-x64.exe").arg(tag);
+        const QString expectedPath = QStringLiteral("/Hunlongyu/mt/releases/download/%1/mt.exe").arg(tag);
         if (!matched.hasMatch() || !std::isfinite(bytes) || bytes < 1 ||
             bytes > maxUpdateBytes || bytes != std::floor(bytes) ||
             asset.value(QStringLiteral("state")).toString() != QStringLiteral("uploaded") ||

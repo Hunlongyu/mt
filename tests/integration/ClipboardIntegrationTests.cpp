@@ -15,6 +15,7 @@
 #include <QListView>
 #include <QListWidget>
 #include <QStackedWidget>
+#include <QSpinBox>
 #include <QTabWidget>
 #include <QMessageBox>
 #include <QPushButton>
@@ -58,6 +59,50 @@ class ClipboardIntegrationTests final : public QObject {
         QVERIFY(!settings->findChild<QWidget*>(QStringLiteral("adminSupport"))->isEnabled());
         app.reset();
         QVERIFY(settings.isNull());
+    }
+    void trayAboutReusesSettingsAndPreservesDraft() {
+        const auto previousName = qApp->applicationDisplayName();
+        const auto restoreName = qScopeGuard([&] { qApp->setApplicationDisplayName(previousName); });
+        qApp->setApplicationDisplayName(QStringLiteral("MT"));
+        QTemporaryDir dir;
+        DesktopServices desktop(dir.path());
+        Application app(dir.path(), true, desktop);
+        QVERIFY(app.start());
+        QAction* about = nullptr;
+        for (auto* action : app.menu_->actions())
+            if (action->text() == QStringLiteral("关于"))
+                about = action;
+        QVERIFY(about);
+        about->trigger();
+        QPointer<SettingsDialog> settings = app.settingsDialog_;
+        QVERIFY(settings);
+        QVERIFY(settings->isVisible());
+        auto* pages = settings->findChild<QStackedWidget*>(QStringLiteral("settingsPages"));
+        QVERIFY(pages);
+        QCOMPARE(pages->currentIndex(), 5);
+        wchar_t nativeTitle[256]{};
+        QVERIFY(GetWindowTextW(reinterpret_cast<HWND>(settings->winId()), nativeTitle, 256) > 0);
+        QCOMPARE(QString::fromWCharArray(nativeTitle), QStringLiteral("设置 - MT"));
+
+        auto* rows = settings->findChild<QSpinBox*>(QStringLiteral("launcherRows"));
+        QVERIFY(rows);
+        const auto changedRows = rows->value() + 1;
+        rows->setValue(changedRows);
+        QVERIFY(settings->hasUnsavedChanges());
+        for (auto* nav : settings->findChildren<QPushButton*>(QStringLiteral("SettingsNav")))
+            if (nav->property("pageIndex").toInt() == 1)
+                nav->click();
+        QCOMPARE(pages->currentIndex(), 1);
+        settings->showMinimized();
+        about->trigger();
+        QCOMPARE(app.settingsDialog_, settings);
+        QVERIFY(!settings->isMinimized());
+        QCOMPARE(pages->currentIndex(), 5);
+        QCOMPARE(rows->value(), changedRows);
+        QVERIFY(settings->hasUnsavedChanges());
+        for (auto* nav : settings->findChildren<QPushButton*>(QStringLiteral("SettingsNav")))
+            QCOMPARE(nav->isChecked(), nav->property("pageIndex").toInt() == 5);
+        QVERIFY(settings->findChildren<QMessageBox*>().isEmpty());
     }
     void emptyHtmlFallsBackWithoutPollutingHistory() {
         QMimeData mime;
@@ -359,9 +404,9 @@ class ClipboardIntegrationTests final : public QObject {
     }
     void clearHistoryConfirmationIsAsyncAndDefaultsToNo() {
         Theme theme;
-        SettingsDialog dialog(theme, Settings::defaults(), QStringLiteral("fixture"),
+        SettingsDialog dialog(theme, Settings::defaults(),
             [](const Settings&, SettingsDialog::Completion done) { done({}); });
-        dialog.findChild<QStackedWidget*>(QStringLiteral("settingsPages"))->setCurrentIndex(3);
+        dialog.findChild<QStackedWidget*>(QStringLiteral("settingsPages"))->setCurrentIndex(2);
         dialog.findChild<QTabWidget*>(QStringLiteral("clipboardTabs"))->setCurrentIndex(2);
         dialog.show();
         auto* button = dialog.findChild<QPushButton*>(QStringLiteral("clearClipboardHistory"));

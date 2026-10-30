@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.29)
-project(mt VERSION 0.1.0 LANGUAGES CXX RC)
+project(mt VERSION 0.1.1 LANGUAGES CXX RC)
 
 if(NOT WIN32 OR NOT MSVC)
     message(FATAL_ERROR "The current native target requires Windows and MSVC.")
@@ -83,6 +83,8 @@ target_include_directories(mt_ui PUBLIC src)
 target_link_libraries(mt_ui PUBLIC mt_core Qt6::Widgets PRIVATE mt_platform mt_options Qt6::Svg)
 
 configure_file(resources/windows/version.rc.in generated/version.rc @ONLY)
+set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/generated/version.rc" PROPERTIES
+    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/resources/logo.ico")
 configure_file(src/app/BuildInfo.h.in generated/BuildInfo.h @ONLY)
 qt_add_executable(mt WIN32
     src/app/main.cpp src/app/Application.cpp src/app/StaticPlugins.cpp

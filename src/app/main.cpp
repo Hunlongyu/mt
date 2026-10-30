@@ -15,11 +15,19 @@
 #include <QTranslator>
 
 int main(int argc, char** argv) {
+    // Shell helpers only use Qt value types and Win32. Avoid loading the GUI
+    // platform, fonts and widget style for every isolated request.
+    if (argc == 2 && (QByteArray(argv[1]) == "--shell-helper" ||
+                      QByteArray(argv[1]) == "--icon-helper")) {
+        QCoreApplication app(argc, argv);
+        return mt::DesktopServices::runShellHelper(QByteArray(argv[1]) == "--icon-helper");
+    }
     QApplication app(argc, argv);
     QTranslator chinese;
     if (chinese.load(QStringLiteral(":/mt/i18n/qtbase_zh_CN.qm")))
         app.installTranslator(&chinese);
-    app.setOrganizationName(QStringLiteral("HunlongyuDevelopment"));
+    app.setOrganizationName(QStringLiteral("dev.hly.com"));
+    app.setOrganizationDomain(QStringLiteral("dev.hly.com"));
     app.setApplicationName(QStringLiteral("mt"));
     app.setApplicationDisplayName(QStringLiteral("MT"));
     app.setWindowIcon(QIcon(QStringLiteral(":/mt/logo.ico")));
@@ -73,6 +81,11 @@ int main(int argc, char** argv) {
         root = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
         if (preview)
             root = QDir(root).filePath(QStringLiteral("preview"));
+        else {
+            const auto legacy = QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation))
+                                    .filePath(QStringLiteral("HunlongyuDevelopment/mt"));
+            root = mt::compatibleDefaultDataRoot(root, legacy);
+        }
     }
     root = QDir::cleanPath(QFileInfo(root).absoluteFilePath());
     mt::DesktopServices desktop(root.toCaseFolded());
@@ -103,7 +116,12 @@ int main(int argc, char** argv) {
     if (parser.isSet(QStringLiteral("settings")))
         QTimer::singleShot(0, &application, &mt::Application::showSettings);
     if (parser.isSet(updateComplete))
-        mt::acknowledgeUpdateStartup(parser.value(updateComplete));
+        QTimer::singleShot(0, &app, [stage = parser.value(updateComplete)] {
+            mt::acknowledgeUpdateStartup(stage);
+        });
+    QTimer::singleShot(1500, &app, [] {
+        mt::cleanupCompletedUpdateHelpers(QCoreApplication::applicationFilePath());
+    });
     if (parser.isSet(QStringLiteral("evidence"))) {
         if (!preview)
             return 4;

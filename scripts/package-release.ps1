@@ -47,7 +47,7 @@ try {
         & python "$PSScriptRoot/extract-qt.py" $archive $qtNotices --licenses
         Assert-NativeSuccess '提取 Qt 与内置组件许可'
     }
-    Copy-Item -LiteralPath $exe -Destination (Join-Path $Destination 'mt-windows-x64.exe')
+    Copy-Item -LiteralPath $exe -Destination (Join-Path $Destination 'mt.exe')
     Write-Output '生成便携包'
     Compress-Archive -Path "$runtime/*" -DestinationPath (Join-Path $Destination "mt-$version-windows-x64.zip") -Force
     # Complete application source + exact Qt and WIL source, sufficient to rebuild/relink.

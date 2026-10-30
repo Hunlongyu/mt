@@ -186,7 +186,7 @@ void LockSession::run() {
     bool emergency = false;
     const bool acquired = notification && sessionNotifications && hook && power;
     if (!acquired)
-        failure = tx(u"黑屏启动失败，输入或电源保护未就绪");
+        failure = tx(u"锁屏启动失败，输入或电源保护未就绪");
     else {
         state.capture = true;
         Q_EMIT ready();
@@ -195,7 +195,7 @@ void LockSession::run() {
         while (!isInterruptionRequested()) {
             const auto now = GetTickCount64();
             if (now - state.heartbeat.load() > 4000 || state.queueFailed) {
-                failure = tx(u"黑屏输入响应异常，已解除遮挡");
+                failure = tx(u"锁屏输入响应异常，已解除遮挡");
                 break;
             }
             if (taskManagerForeground()) {
@@ -221,12 +221,12 @@ void LockSession::run() {
                 wil::unique_hhook replacement(
                     SetWindowsHookExW(WH_KEYBOARD_LL, Impl::hook, instance, 0));
                 if (!replacement) {
-                    failure = tx(u"黑屏键盘保护无法恢复，已解除遮挡");
+                    failure = tx(u"锁屏键盘保护无法恢复，已解除遮挡");
                     break;
                 }
                 if (!UnhookWindowsHookEx(hook.get()) &&
                     GetLastError() != ERROR_INVALID_HOOK_HANDLE) {
-                    failure = tx(u"黑屏键盘保护无法恢复，已解除遮挡");
+                    failure = tx(u"锁屏键盘保护无法恢复，已解除遮挡");
                     break;
                 }
                 (void)hook.release(); // uninstalled successfully, or already removed by Windows
@@ -283,7 +283,7 @@ void LockSession::run() {
     state.capture = false;
     if (hook) {
         if (!UnhookWindowsHookEx(hook.get()) && GetLastError() != ERROR_INVALID_HOOK_HANDLE)
-            failure = tx(u"黑屏键盘钩子释放失败，输入线程已停止");
+            failure = tx(u"锁屏键盘钩子释放失败，输入线程已停止");
         else
             (void)hook.release();
     }

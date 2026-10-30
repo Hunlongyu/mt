@@ -1,6 +1,7 @@
 #include "Settings.h"
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QSaveFile>
@@ -14,6 +15,11 @@
 #include <cmath>
 
 namespace mt {
+QString compatibleDefaultDataRoot(const QString& preferredRoot, const QString& legacyRoot) {
+    if (QFileInfo::exists(preferredRoot) || !QFileInfo::exists(legacyRoot))
+        return preferredRoot;
+    return legacyRoot;
+}
 Settings Settings::defaults() {
     Settings s;
     s.gestureActions = {{QStringLiteral("1"), QStringLiteral("cmd:minimize")},

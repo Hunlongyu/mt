@@ -1,16 +1,18 @@
 #pragma once
 #include "modules/launcher/LauncherCatalog.h"
 #include <QHash>
+#include <QCache>
 #include <QImage>
 #include <QJsonObject>
 #include <QObject>
 #include <QQueue>
 #include <QSet>
+#include <QTimer>
 #include <functional>
 class QProcess;
 namespace mt {
-// Shell extensions are third-party code and may block indefinitely. Each request runs in a
-// bounded, non-elevated helper invocation of the same executable, never in the GUI process.
+// Shell extensions run outside the GUI process with a per-request timeout.
+// Icons reuse up to three lightweight helpers; explicit actions retain their own process.
 class ShellJobs final : public QObject {
     Q_OBJECT
   public:
@@ -18,6 +20,7 @@ class ShellJobs final : public QObject {
     explicit ShellJobs(QObject* parent = nullptr);
     ~ShellJobs() override;
     void icon(const QString& id, const QString& source, const QString& root, IconCallback callback);
+    void prioritizeIcons(const QStringList& ids);
     void reveal(const QString& target, const QString& root,
                 std::function<void(std::expected<void, QString>)> callback);
     void launch(const LaunchItem& item, const QString& root,
@@ -38,11 +41,16 @@ class ShellJobs final : public QObject {
     };
     void enqueue(Request request);
     void pump();
+    void schedulePump();
     QQueue<Request> queue_;
     QSet<QProcess*> active_;
     QSet<QProcess*> activeActions_;
-    QHash<QString, QImage> iconCache_;
+    QList<QProcess*> idleIcons_;
+    QTimer idleTimer_;
+    QCache<QString, QImage> iconCache_{256};
     QHash<QString, QList<IconCallback>> iconWaiters_;
+    QSet<QString> priorityIcons_;
+    bool pumpScheduled_ = false;
     bool stopping_ = false;
 };
 } // namespace mt

@@ -97,28 +97,49 @@ void Panel::showNear(QPoint anchor, bool activate) {
         activateWindow();
 }
 void Panel::enableTitleDrag(QWidget* widget) {
+    if (dragWidgets_.contains(widget))
+        return;
     dragWidgets_.insert(widget);
     widget->installEventFilter(this);
 }
 bool Panel::eventFilter(QObject* watched, QEvent* event) {
-    if (!dragWidgets_.contains(watched))
-        return QWidget::eventFilter(watched, event);
+    if (dragWidgets_.contains(watched) && handleSurfaceDrag(static_cast<QWidget*>(watched), event))
+        return true;
+    return QWidget::eventFilter(watched, event);
+}
+bool Panel::handleSurfaceDrag(QWidget* surface, QEvent* event, bool allowStart) {
     if (event->type() == QEvent::MouseButtonPress) {
         auto* e = static_cast<QMouseEvent*>(event);
-        if (e->button() == Qt::LeftButton) {
-            dragging_ = true;
+        if (allowStart && e->button() == Qt::LeftButton) {
+            dragSource_ = surface;
             dragOffset_ = e->globalPosition().toPoint() - pos();
             return true;
         }
     }
-    if (event->type() == QEvent::MouseMove && dragging_) {
+    if (!dragSource_ || dragSource_ != surface)
+        return false;
+    if (event->type() == QEvent::MouseMove) {
         auto* e = static_cast<QMouseEvent*>(event);
+        if (!(e->buttons() & Qt::LeftButton)) {
+            dragSource_.clear();
+            return false;
+        }
         move(e->globalPosition().toPoint() - dragOffset_);
         return true;
     }
-    if (event->type() == QEvent::MouseButtonRelease)
-        dragging_ = false;
-    return QWidget::eventFilter(watched, event);
+    if (event->type() == QEvent::MouseButtonRelease &&
+        static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
+        dragSource_.clear();
+        return true;
+    }
+    if (event->type() == QEvent::UngrabMouse || event->type() == QEvent::Hide)
+        dragSource_.clear();
+    return false;
+}
+bool Panel::event(QEvent* event) {
+    if (event->type() == QEvent::WindowDeactivate)
+        dragSource_.clear();
+    return QWidget::event(event);
 }
 void Panel::closeEvent(QCloseEvent* event) {
     // quitOnLastWindowClosed is disabled by the host. Accepting close hides this reusable
@@ -127,6 +148,7 @@ void Panel::closeEvent(QCloseEvent* event) {
     hide();
 }
 void Panel::hideEvent(QHideEvent* event) {
+    dragSource_.clear();
     if (fade_->state() == QAbstractAnimation::Running) {
         fade_->stop();
         applyOpacity(opacity_);

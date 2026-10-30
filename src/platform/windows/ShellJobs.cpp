@@ -5,7 +5,9 @@
 #include <QJsonDocument>
 #include <QProcess>
 #include <QTimer>
+#include <algorithm>
 #include <memory>
+#include <utility>
 
 namespace mt {
 namespace {
@@ -27,8 +29,27 @@ LaunchItem itemValue(const QJsonObject& o) {
             o.value(QStringLiteral("iconPath")).toString(),
             o.value(QStringLiteral("elevated")).toBool()};
 }
+void retire(QProcess* process) {
+    if (process->state() == QProcess::NotRunning)
+        process->deleteLater();
+    else {
+        QObject::connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
+                         process, &QObject::deleteLater);
+        process->kill();
+    }
+}
 } // namespace
-ShellJobs::ShellJobs(QObject* parent) : QObject(parent) {}
+ShellJobs::ShellJobs(QObject* parent) : QObject(parent) {
+    idleTimer_.setSingleShot(true);
+    idleTimer_.setInterval(30000);
+    connect(&idleTimer_, &QTimer::timeout, this, [this] {
+        const auto idle = std::exchange(idleIcons_, {});
+        for (auto* process : idle) {
+            process->disconnect(this);
+            retire(process);
+        }
+    });
+}
 ShellJobs::~ShellJobs() {
     shutdown();
 }
@@ -38,15 +59,33 @@ void ShellJobs::shutdown() {
     stopping_ = true;
     queue_.clear();
     iconWaiters_.clear();
-    const auto running = active_;
+    idleTimer_.stop();
+    const auto running = findChildren<QProcess*>(QString{}, Qt::FindDirectChildrenOnly);
     active_.clear();
     activeActions_.clear();
+    idleIcons_.clear();
     for (auto* process : running) {
         process->disconnect(this);
         process->kill();
         process->waitForFinished(1000);
         delete process;
     }
+}
+void ShellJobs::prioritizeIcons(const QStringList& ids) {
+    priorityIcons_ = QSet<QString>(ids.begin(), ids.end());
+    std::stable_partition(queue_.begin(), queue_.end(), [this](const Request& request) {
+        return request.payload.value(QStringLiteral("operation")).toString() != QStringLiteral("icon") ||
+               priorityIcons_.contains(request.payload.value(QStringLiteral("id")).toString());
+    });
+}
+void ShellJobs::schedulePump() {
+    if (stopping_ || pumpScheduled_)
+        return;
+    pumpScheduled_ = true;
+    QTimer::singleShot(0, this, [this] {
+        pumpScheduled_ = false;
+        pump();
+    });
 }
 void ShellJobs::cancelQueuedActions() {
     queue_.removeIf([](const Request& request) {
@@ -56,9 +95,17 @@ void ShellJobs::cancelQueuedActions() {
 void ShellJobs::enqueue(Request request) {
     if (stopping_)
         return;
-    if (request.payload.value(QStringLiteral("operation")).toString() == QStringLiteral("icon"))
-        queue_.enqueue(std::move(request));
-    else {
+    if (request.payload.value(QStringLiteral("operation")).toString() == QStringLiteral("icon")) {
+        auto position = queue_.size();
+        if (priorityIcons_.contains(request.payload.value(QStringLiteral("id")).toString())) {
+            position = 0;
+            while (position < queue_.size() &&
+                   (queue_[position].payload.value(QStringLiteral("operation")).toString() != QStringLiteral("icon") ||
+                    priorityIcons_.contains(queue_[position].payload.value(QStringLiteral("id")).toString())))
+                ++position;
+        }
+        queue_.insert(position, std::move(request));
+    } else {
         // Actions take precedence over queued decoration work, preserving action order.
         qsizetype position = 0;
         while (position < queue_.size() &&
@@ -67,7 +114,7 @@ void ShellJobs::enqueue(Request request) {
             ++position;
         queue_.insert(position, std::move(request));
     }
-    pump();
+    schedulePump();
 }
 void ShellJobs::pump() {
     while (!stopping_ && active_.size() < 4 && !queue_.isEmpty()) {
@@ -79,9 +126,11 @@ void ShellJobs::pump() {
         auto request = queue_.dequeue();
         if (request.permitted && !request.permitted())
             continue;
-        auto* process = new QProcess(this);
+        const bool icon = request.payload.value(QStringLiteral("operation")).toString() == QStringLiteral("icon");
+        auto* process = icon && !idleIcons_.isEmpty() ? idleIcons_.takeFirst() : new QProcess(this);
+        process->disconnect(this);
         active_.insert(process);
-        if (request.payload.value(QStringLiteral("operation")).toString() != QStringLiteral("icon"))
+        if (!icon)
             activeActions_.insert(process);
         auto* timer = new QTimer(process);
         timer->setSingleShot(true);
@@ -89,7 +138,7 @@ void ShellJobs::pump() {
         auto complete = std::make_shared<bool>(false);
         auto timedOut = std::make_shared<bool>(false);
         auto finish = [this, process, timer, request, output, complete,
-                       timedOut](int code) mutable {
+                       timedOut, icon](int code) mutable {
             if (*complete)
                 return;
             *complete = true;
@@ -98,6 +147,7 @@ void ShellJobs::pump() {
             activeActions_.remove(process);
             std::expected<QJsonObject, QString> result =
                 std::unexpected(tx(u"Shell 操作失败"));
+            bool validReply = false;
             if (*timedOut)
                 result =
                     std::unexpected(request.payload.value(QStringLiteral("operation")).toString() ==
@@ -108,6 +158,7 @@ void ShellJobs::pump() {
                 QJsonParseError error;
                 const auto doc = QJsonDocument::fromJson(*output, &error);
                 if (error.error == QJsonParseError::NoError && doc.isObject()) {
+                    validReply = true;
                     const auto o = doc.object();
                     if (o.value(QStringLiteral("ok")).toBool())
                         result = o;
@@ -116,25 +167,42 @@ void ShellJobs::pump() {
                                                      .toString(tx(u"Shell 操作失败")));
                 }
             }
-            process->deleteLater();
+            process->disconnect(this);
+            timer->deleteLater();
+            if (icon && validReply && !*timedOut && !stopping_ &&
+                process->state() == QProcess::Running) {
+                idleIcons_.append(process);
+                idleTimer_.start();
+                connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
+                        [this, process] {
+                            idleIcons_.removeAll(process);
+                            process->deleteLater();
+                            schedulePump();
+                        });
+            } else
+                retire(process);
             if (!stopping_)
                 request.callback(std::move(result));
-            pump();
+            schedulePump();
         };
-        connect(process, &QProcess::started, this, [process, request] {
+        auto send = [process, request, icon] {
             if (request.permitted && !request.permitted()) {
                 process->kill();
                 return;
             }
-            process->write(QJsonDocument(request.payload).toJson(QJsonDocument::Compact));
-            process->closeWriteChannel();
-        });
-        connect(process, &QProcess::readyReadStandardOutput, this, [process, output, timedOut] {
+            process->write(QJsonDocument(request.payload).toJson(QJsonDocument::Compact) +
+                           (icon ? QByteArrayLiteral("\n") : QByteArray{}));
+            if (!icon)
+                process->closeWriteChannel();
+        };
+        connect(process, &QProcess::started, this, send);
+        connect(process, &QProcess::readyReadStandardOutput, this, [process, output, timedOut, icon, finish]() mutable {
             output->append(process->readAllStandardOutput());
             if (output->size() > 8 * 1024 * 1024) {
                 *timedOut = true;
                 process->kill();
-            }
+            } else if (icon && output->contains('\n'))
+                finish(0);
         });
         connect(process, &QProcess::readyReadStandardError, this,
                 [process] { process->readAllStandardError(); });
@@ -152,25 +220,32 @@ void ShellJobs::pump() {
             *timedOut = true;
             process->kill();
         });
-        process->setProgram(QCoreApplication::applicationFilePath());
-        process->setArguments({QStringLiteral("--shell-helper")});
-        process->setProcessChannelMode(QProcess::SeparateChannels);
-        process->start();
         timer->start(request.timeout);
+        if (process->state() == QProcess::Running)
+            send();
+        else {
+            process->setProgram(QCoreApplication::applicationFilePath());
+            process->setArguments({icon ? QStringLiteral("--icon-helper") : QStringLiteral("--shell-helper")});
+            process->setProcessChannelMode(QProcess::SeparateChannels);
+            process->start();
+        }
     }
 }
 void ShellJobs::icon(const QString& id, const QString& source, const QString& root, IconCallback callback) {
+    if (stopping_)
+        return;
     const auto key = root + u'\n' + id + u'\n' + source;
-    if (iconCache_.contains(key)) {
+    if (const auto* cached = iconCache_.object(key)) {
         QTimer::singleShot(
             0, this,
-            [callback = std::move(callback), image = iconCache_.value(key)] { callback(image); });
+            [callback = std::move(callback), image = *cached] { callback(image); });
         return;
     }
     iconWaiters_[key].append(std::move(callback));
     if (iconWaiters_[key].size() > 1)
         return;
     enqueue({{{QStringLiteral("operation"), QStringLiteral("icon")},
+              {QStringLiteral("id"), id},
               {QStringLiteral("source"), source},
               {QStringLiteral("root"), root}},
              3000,
@@ -179,9 +254,7 @@ void ShellJobs::icon(const QString& id, const QString& source, const QString& ro
                  if (result)
                      image = QImage::fromData(QByteArray::fromBase64(
                          result->value(QStringLiteral("png")).toString().toLatin1()));
-                 if (iconCache_.size() >= 256)
-                     iconCache_.clear();
-                 if (!image.isNull()) iconCache_.insert(key, image);
+                 if (!image.isNull()) iconCache_.insert(key, new QImage(image));
                  const auto waiters = iconWaiters_.take(key);
                  for (const auto& callback : waiters)
                      callback(image);

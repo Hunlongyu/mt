@@ -35,6 +35,12 @@ class GestureInput final : public QObject {
     void setAdminAvailable(bool available) noexcept {
         adminAvailable_.store(available);
     }
+    // Only the explicitly registered launcher may receive gestures in this
+    // process. Changing/hiding its native window invalidates in-flight work.
+    void setLauncherWindow(quintptr handle) noexcept {
+        if (launcherWindow_.exchange(handle) != handle)
+            ++cancellation_;
+    }
     void setBlocked(bool blocked) noexcept {
         if (blocked_.exchange(blocked) != blocked && blocked)
             ++cancellation_;
@@ -55,6 +61,7 @@ class GestureInput final : public QObject {
     std::unique_ptr<Impl> impl_;
     std::atomic_bool blocked_{false};
     std::atomic_bool adminAvailable_{false};
+    std::atomic<quintptr> launcherWindow_{0};
     std::atomic<quint64> cancellation_{0};
     std::atomic<quint64> stroke_{0};
     quint64 generation_ = 0;

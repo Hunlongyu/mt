@@ -4,6 +4,9 @@
 #include <expected>
 
 namespace mt {
+// Preserve existing installations when the organization-derived default changes.
+// This only selects a root; it never copies, merges or rewrites user data.
+QString compatibleDefaultDataRoot(const QString& preferredRoot, const QString& legacyRoot);
 class LauncherCatalog;
 struct Settings {
     QString theme = QStringLiteral("dark"); // dark | light | auto (follow Windows)

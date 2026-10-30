@@ -55,6 +55,10 @@ bool allMouseReleased() {
 }
 HWND ownerAt(POINT point) {
     const auto hit = WindowFromPoint(point);
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hit, &pid);
+    // Owned menus/dialogs must not inherit the launcher's opt-in via ROOTOWNER.
+    if (pid == GetCurrentProcessId()) return GetAncestor(hit, GA_ROOT);
     const auto owner = GetAncestor(hit, GA_ROOTOWNER);
     return owner ? owner : hit;
 }
@@ -166,7 +170,9 @@ struct GestureInput::Impl final : QObject {
         permitted = false;
         candidate = DesktopServices::windowTarget(reinterpret_cast<quintptr>(ownerAt(point)));
         candidate.focusedControl = 0; // the gesture owns a window, not a caret
-        if (!candidate.handle || !candidate.processStarted || candidate.processId == GetCurrentProcessId()) return;
+        if (!candidate.handle || !candidate.processStarted ||
+            (candidate.processId == GetCurrentProcessId() &&
+             candidate.handle != owner->launcherWindow_.load())) return;
         candidateProcess = DesktopServices::processName(candidate);
         const auto level = integrity(candidate.processId);
         candidateAdmin = level > ownIntegrity;
@@ -178,11 +184,13 @@ struct GestureInput::Impl final : QObject {
     bool admit(POINT point, quint64 now) {
         const auto window = ownerAt(point);
         DWORD pid = 0;
-        if (!window || !GetWindowThreadProcessId(window, &pid) || pid == GetCurrentProcessId()) return false;
+        if (!window || !GetWindowThreadProcessId(window, &pid)) return false;
+        const bool ownWindow = pid == GetCurrentProcessId();
+        if (ownWindow && reinterpret_cast<quintptr>(window) != owner->launcherWindow_.load()) return false;
         // The idle cache is an optimization, never a prerequisite for owning a
         // press. A cache miss uses native identity/token queries at this point;
         // no Shell, file I/O or nested event loop.
-        if (window != hwnd(candidate) || pid != candidate.processId || now - gated >= 100) {
+        if (ownWindow || window != hwnd(candidate) || pid != candidate.processId || now - gated >= 100) {
             gate(point);
             gated = now;
         }

@@ -63,7 +63,7 @@ class DesktopServices final : public QObject {
     static std::expected<LaunchItem, QString> importTarget(const QString& path,
                                                            const QString& dataRoot);
     static QImage fileIcon(const QString& path);
-    static int runShellHelper();
+    static int runShellHelper(bool persistentIcons = false);
     // Keyboard and mouse hooks for the non-activating clipboard panel.
     std::expected<void, QString> capturePanelNavigation(bool enabled, bool keepMouse = false);
     // Actual hook state, for diagnostics: keyboard, mouse.

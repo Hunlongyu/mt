@@ -26,11 +26,11 @@ QByteArray fixtureExe() {
     return bytes;
 }
 QJsonObject release(const QByteArray& bytes = fixtureExe()) {
-    QJsonObject asset{{QStringLiteral("name"), QStringLiteral("mt-windows-x64.exe")},
+    QJsonObject asset{{QStringLiteral("name"), QStringLiteral("mt.exe")},
         {QStringLiteral("state"), QStringLiteral("uploaded")},
         {QStringLiteral("size"), bytes.size()},
         {QStringLiteral("digest"), QStringLiteral("sha256:") + QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex())},
-        {QStringLiteral("browser_download_url"), QStringLiteral("https://github.com/Hunlongyu/mt/releases/download/v0.2.0/mt-windows-x64.exe")}};
+        {QStringLiteral("browser_download_url"), QStringLiteral("https://github.com/Hunlongyu/mt/releases/download/v0.2.0/mt.exe")}};
     return {{QStringLiteral("tag_name"), QStringLiteral("v0.2.0")},
             {QStringLiteral("draft"), false}, {QStringLiteral("prerelease"), false},
             {QStringLiteral("assets"), QJsonArray{asset}}};
@@ -116,6 +116,15 @@ class UpdateTests final : public QObject {
         auto asset = bad[QStringLiteral("assets")].toArray()[0];
         bad[QStringLiteral("assets")] = QJsonArray{asset, asset};
         QVERIFY(!parseUpdateRelease(QJsonDocument(bad).toJson(), QStringLiteral("0.1.0")));
+        for (const auto& url : {
+                 QStringLiteral("https://github.com/Hunlongyu/mt/releases/download/v0.2.0/mt-windows-x64.exe"),
+                 QStringLiteral("https://github.com/Hunlongyu/mt/releases/download/v0.3.0/mt.exe")}) {
+            bad = original;
+            auto mismatched = bad[QStringLiteral("assets")].toArray()[0].toObject();
+            mismatched[QStringLiteral("browser_download_url")] = url;
+            bad[QStringLiteral("assets")] = QJsonArray{mismatched};
+            QVERIFY(!parseUpdateRelease(QJsonDocument(bad).toJson(), QStringLiteral("0.1.0")));
+        }
         QVERIFY(!parseUpdateRelease(QByteArray(1024 * 1024 + 1, 'x'), QStringLiteral("0.1.0")));
     }
     void redirectsCannotEscapeHttpsGitHubAssets() {
@@ -200,6 +209,47 @@ class UpdateTests final : public QObject {
         service.download();
         QTRY_COMPARE(service.state(), UpdateService::State::Error);
         QCOMPARE(network.requests.size(), 2);
+    }
+    void completedHelperCleanupPreservesRecoveryAndOtherInstallations() {
+        QTemporaryDir dir;
+        const auto put = [](const QString& path, const QByteArray& data) {
+            QFile file(path);
+            return file.open(QIODevice::WriteOnly) && file.write(data) == data.size();
+        };
+        const auto executable = dir.filePath(QStringLiteral("my mt.exe"));
+        QVERIFY(put(executable, "installed EXE"));
+        const auto makeStage = [&](const QString& id, bool installed, bool started,
+                                   bool failed, const QString& owner) {
+            const auto path = dir.filePath(QStringLiteral(".mt-update-00000000-0000-0000-0000-") + id);
+            QDir().mkdir(path);
+            const QDir stage(path);
+            put(stage.filePath(QStringLiteral("updater.exe")), "temporary helper");
+            put(stage.filePath(QStringLiteral("previous.exe")), "rollback EXE");
+            put(stage.filePath(QStringLiteral("plan.json")), QJsonDocument(QJsonObject{
+                {QStringLiteral("target"), owner}}).toJson());
+            if (installed) put(stage.filePath(QStringLiteral("installed")), "installed");
+            if (started) put(stage.filePath(QStringLiteral("startup.ok")), "ok");
+            if (failed) put(stage.filePath(QStringLiteral("error.txt")), "keep failure evidence");
+            return stage;
+        };
+        const auto owner = QFileInfo(executable).canonicalFilePath();
+        const auto complete = makeStage(QStringLiteral("000000000001"), true, true, false, owner);
+        const auto pending = makeStage(QStringLiteral("000000000002"), true, false, false, owner);
+        const auto failed = makeStage(QStringLiteral("000000000003"), true, true, true, owner);
+        const auto other = makeStage(QStringLiteral("000000000004"), true, true, false,
+                                     dir.filePath(QStringLiteral("another.exe")));
+        const auto incomplete = makeStage(QStringLiteral("000000000005"), false, true, false, owner);
+        cleanupCompletedUpdateHelpers(executable);
+        QVERIFY(!QFile::exists(complete.filePath(QStringLiteral("updater.exe"))));
+        for (const auto& stage : {pending, failed, other, incomplete})
+            QVERIFY(QFile::exists(stage.filePath(QStringLiteral("updater.exe"))));
+        for (const auto& stage : {complete, pending, failed, other, incomplete}) {
+            QVERIFY(QFile::exists(stage.filePath(QStringLiteral("previous.exe"))));
+            QVERIFY(QFile::exists(stage.filePath(QStringLiteral("plan.json"))));
+        }
+        QFile current(executable);
+        QVERIFY(current.open(QIODevice::ReadOnly));
+        QCOMPARE(current.readAll(), QByteArrayLiteral("installed EXE"));
     }
     void persistedPreferenceAndExecutableValidation() {
         auto settings = Settings::defaults();

@@ -6,6 +6,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
@@ -13,6 +14,7 @@
 #include <QSaveFile>
 #include <QThread>
 #include <QUuid>
+#include <QWindow>
 #include <QtEndian>
 #include <windows.h>
 #include <wil/resource.h>
@@ -41,6 +43,19 @@ bool validStage(const QString& stage, const QString& executable) {
     return directory.isDir() && !directory.isSymLink() &&
            name.match(directory.fileName()).hasMatch() &&
            directory.absolutePath().compare(target.absolutePath(), Qt::CaseInsensitive) == 0;
+}
+bool restartGui(const QString& executable, const QStringList& arguments) {
+    QProcess child;
+    child.setProgram(executable);
+    child.setArguments(arguments);
+    child.setWorkingDirectory(QFileInfo(executable).absolutePath());
+    child.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
+        // The updater may be hidden, but the new GUI must be able to show windows.
+        // Startup-to-tray remains controlled by MT's own saved preference.
+        args->startupInfo->dwFlags |= STARTF_USESHOWWINDOW;
+        args->startupInfo->wShowWindow = SW_SHOWNORMAL;
+    });
+    return child.startDetached();
 }
 }
 std::expected<void, QString> verifyUpdateExecutable(const QString& path,
@@ -165,7 +180,7 @@ int runUpdateInstaller(const QString& path, bool preview) {
     if (preview)
         launchArguments.append({QStringLiteral("--preview"), QStringLiteral("--quit-after"), QStringLiteral("2500")});
     const auto restartOriginal = [&] {
-        return QProcess::startDetached(target, launchArguments, targetInfo.absolutePath());
+        return restartGui(target, launchArguments);
     };
     if (auto verified = verifyUpdateExecutable(candidate, digest, bytes); !verified) {
         restartOriginal();
@@ -190,13 +205,9 @@ int runUpdateInstaller(const QString& path, bool preview) {
         rollback();
         return report(verified.error());
     }
-    QProcess child;
-    child.setProgram(target);
     auto childArguments = launchArguments;
     childArguments.append({QStringLiteral("--update-complete"), stage.absolutePath()});
-    child.setArguments(childArguments);
-    child.setWorkingDirectory(targetInfo.absolutePath());
-    if (!child.startDetached()) {
+    if (!restartGui(target, childArguments)) {
         rollback();
         return report(QStringLiteral("新版本无法启动，已尝试恢复原程序"));
     }
@@ -204,7 +215,49 @@ int runUpdateInstaller(const QString& path, bool preview) {
     return 0;
 }
 void acknowledgeUpdateStartup(const QString& stage) {
-    if (validStage(stage, QCoreApplication::applicationFilePath()))
-        writeFile(QDir(stage).filePath(QStringLiteral("startup.ok")), QByteArrayLiteral("ok"));
+    if (!validStage(stage, QCoreApplication::applicationFilePath()))
+        return;
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    GetStartupInfoW(&startup);
+    int visibleWindows = 0;
+    if (qobject_cast<QGuiApplication*>(QCoreApplication::instance()))
+        for (auto* window : QGuiApplication::allWindows())
+            if (window->handle() && IsWindowVisible(reinterpret_cast<HWND>(window->winId())))
+                ++visibleWindows;
+    const QJsonObject report{{QStringLiteral("pid"), qint64(GetCurrentProcessId())},
+                             {QStringLiteral("executable"), QCoreApplication::applicationFilePath()},
+                             {QStringLiteral("usesShowWindow"), bool(startup.dwFlags & STARTF_USESHOWWINDOW)},
+                             {QStringLiteral("showWindow"), startup.wShowWindow},
+                             {QStringLiteral("nativeVisibleWindows"), visibleWindows}};
+    writeFile(QDir(stage).filePath(QStringLiteral("startup.ok")),
+              QJsonDocument(report).toJson(QJsonDocument::Compact));
+}
+void cleanupCompletedUpdateHelpers(const QString& executable) {
+    const QFileInfo target(executable);
+    const auto canonical = target.canonicalFilePath();
+    if (canonical.isEmpty() || target.isSymLink())
+        return;
+    const auto stages = target.dir().entryList({QStringLiteral(".mt-update-*")},
+                                               QDir::Dirs | QDir::Hidden | QDir::NoDotAndDotDot);
+    for (const auto& name : stages) {
+        const QDir stage(target.dir().filePath(name));
+        if (!validStage(stage.absolutePath(), canonical) ||
+            !QFile::exists(stage.filePath(QStringLiteral("installed"))) ||
+            !QFile::exists(stage.filePath(QStringLiteral("startup.ok"))) ||
+            QFile::exists(stage.filePath(QStringLiteral("error.txt"))))
+            continue;
+        const auto planPath = stage.filePath(QStringLiteral("plan.json"));
+        QFile plan(planPath);
+        if (QFileInfo(planPath).isSymLink() || !plan.open(QIODevice::ReadOnly) || plan.size() > 16384)
+            continue;
+        const auto document = QJsonDocument::fromJson(plan.readAll());
+        if (!document.isObject() || document.object().value(QStringLiteral("target")).toString()
+                .compare(canonical, Qt::CaseInsensitive) != 0)
+            continue;
+        const auto helper = stage.filePath(QStringLiteral("updater.exe"));
+        if (!QFileInfo(helper).isSymLink())
+            QFile::remove(helper); // Busy helpers are retried on a later application startup.
+    }
 }
 } // namespace mt

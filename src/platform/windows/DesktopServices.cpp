@@ -688,17 +688,8 @@ QImage DesktopServices::fileIcon(const QString& path) {
     wil::unique_hicon icon(info.hIcon);
     return QImage::fromHICON(icon.get());
 }
-int DesktopServices::runShellHelper() {
-    QByteArray payload;
-    std::array<char, 16384> buffer{};
-    DWORD read = 0;
-    while (ReadFile(GetStdHandle(STD_INPUT_HANDLE), buffer.data(),
-                    static_cast<DWORD>(buffer.size()), &read, nullptr) &&
-           read) {
-        payload.append(buffer.data(), static_cast<qsizetype>(read));
-        if (payload.size() > 8 * 1024 * 1024)
-            return 3;
-    }
+namespace {
+int respondToShellRequest(const QByteArray& payload, bool persistentIcons) {
     QJsonObject response{{QStringLiteral("ok"), false}};
     try {
         QJsonParseError error;
@@ -707,11 +698,13 @@ int DesktopServices::runShellHelper() {
             return 3;
         const auto request = document.object();
         const auto operation = request.value(QStringLiteral("operation")).toString();
+        if (persistentIcons && operation != QStringLiteral("icon"))
+            return 3;
         const auto root = request.value(QStringLiteral("root")).toString();
         if (operation == QStringLiteral("icon")) {
             const auto source =
                 resolvedPath(request.value(QStringLiteral("source")).toString(), root);
-            const auto image = fileIcon(source);
+            const auto image = DesktopServices::fileIcon(source);
             QByteArray bytes;
             QBuffer output(&bytes);
             output.open(QIODevice::WriteOnly);
@@ -721,7 +714,7 @@ int DesktopServices::runShellHelper() {
             } else
                 response[QStringLiteral("error")] = tx(u"没有可用图标");
         } else if (operation == QStringLiteral("reveal")) {
-            const bool shown = revealInExplorer(request.value(QStringLiteral("target")).toString(), root);
+            const bool shown = DesktopServices::revealInExplorer(request.value(QStringLiteral("target")).toString(), root);
             response[QStringLiteral("ok")] = shown;
             if (!shown) response[QStringLiteral("error")] = tx(u"文件已不存在或无法定位");
         } else if (operation == QStringLiteral("launch")) {
@@ -733,7 +726,7 @@ int DesktopServices::runShellHelper() {
             item.elevated = o.value(QStringLiteral("elevated")).toBool();
             if (item.target.isEmpty())
                 return 3;
-            const auto result = launch(item, root);
+            const auto result = DesktopServices::launch(item, root);
             response[QStringLiteral("ok")] = result.has_value();
             if (!result)
                 response[QStringLiteral("error")] = result.error();
@@ -744,7 +737,7 @@ int DesktopServices::runShellHelper() {
             QJsonArray items;
             bool ok = true;
             for (const auto& value : paths) {
-                auto result = importTarget(value.toString(), root);
+                auto result = DesktopServices::importTarget(value.toString(), root);
                 if (!result) {
                     ok = false;
                     response[QStringLiteral("error")] = result.error();
@@ -767,7 +760,8 @@ int DesktopServices::runShellHelper() {
     } catch (...) {
         response[QStringLiteral("error")] = tx(u"Shell 处理失败");
     }
-    const auto bytes = QJsonDocument(response).toJson(QJsonDocument::Compact);
+    const auto bytes = QJsonDocument(response).toJson(QJsonDocument::Compact) +
+                       (persistentIcons ? QByteArrayLiteral("\n") : QByteArray{});
     qsizetype offset = 0;
     while (offset < bytes.size()) {
         DWORD written = 0;
@@ -778,6 +772,28 @@ int DesktopServices::runShellHelper() {
         offset += written;
     }
     return 0;
+}
+} // namespace
+int DesktopServices::runShellHelper(bool persistentIcons) {
+    QByteArray payload;
+    std::array<char, 16384> buffer{};
+    DWORD read = 0;
+    while (ReadFile(GetStdHandle(STD_INPUT_HANDLE), buffer.data(),
+                   static_cast<DWORD>(buffer.size()), &read, nullptr) && read) {
+        payload.append(buffer.data(), static_cast<qsizetype>(read));
+        if (payload.size() > 8 * 1024 * 1024)
+            return 3;
+        if (persistentIcons) {
+            qsizetype end = 0;
+            while ((end = payload.indexOf('\n')) >= 0) {
+                const auto request = payload.left(end);
+                payload.remove(0, end + 1);
+                if (const auto result = respondToShellRequest(request, true); result != 0)
+                    return result;
+            }
+        }
+    }
+    return persistentIcons ? (payload.isEmpty() ? 0 : 3) : respondToShellRequest(payload, false);
 }
 std::expected<void, QString> DesktopServices::capturePanelNavigation(bool enabled, bool keepMouse) {
     const bool mouse = enabled || keepMouse;

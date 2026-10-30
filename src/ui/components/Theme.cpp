@@ -2,7 +2,6 @@
 #include "PopupMenuStyle.h"
 #include "ui/shell/SettingsControls.h"
 #include <QApplication>
-#include <QStyle>
 #include <QFile>
 #include <QJsonDocument>
 #include <QPainter>
@@ -95,10 +94,7 @@ void Theme::apply(const QString& name) {
     palette.setColor(QPalette::Highlight, color(QStringLiteral("surface-selected")));
     palette.setColor(QPalette::HighlightedText, color(QStringLiteral("text")));
     palette.setColor(QPalette::PlaceholderText, color(QStringLiteral("muted")));
-    // Tooltips keep Qt's own look (user request 2026-10-29), not the theme.
-    const auto standard = QApplication::style()->standardPalette();
-    palette.setColor(QPalette::ToolTipBase, standard.color(QPalette::ToolTipBase));
-    palette.setColor(QPalette::ToolTipText, standard.color(QPalette::ToolTipText));
+    // Leave QToolTip's separate platform palette and default rendering untouched.
     palette.setColor(QPalette::Disabled, QPalette::Text, color(QStringLiteral("muted")));
     QApplication::setPalette(palette);
     QString qss = QStringLiteral(R"(
@@ -114,6 +110,9 @@ QToolButton:pressed { background: @active-bg; }
 QToolButton:hover { background: @surface-hover; }
 QToolButton:checked { background: @button-bg; border-color: @button-bg; }
 QToolButton:checked:hover { background: @button-hover; border-color: @button-hover; }
+QToolButton#LauncherHeaderAction:hover { background: transparent; border-color: @border-strong; }
+QToolButton#LauncherHeaderAction:pressed { background: @surface-selected; border-color: @focus; }
+QToolButton#LauncherHeaderAction:checked, QToolButton#LauncherHeaderAction:checked:hover { background: @button-bg; border-color: @button-bg; }
 QFrame#FilterGroup { background: @surface-subtle; border: 1px solid @border; border-radius: 7px; }
 QToolButton#FilterButton { border-radius: 5px; }
 QToolButton:focus, QPushButton:focus { border: 1px solid @focus; }
@@ -135,15 +134,21 @@ QWidget#BottomBar { background: @chrome; border: none; }
 QTabBar::tab { background: transparent; border: none; border-bottom: 3px solid transparent; padding: 5px 8px; }
 QTabBar::tab:selected { border-bottom-color: @tab-indicator; }
 QTabBar::tab:hover { background: @surface-hover; }
+QTabBar#LauncherCategories::tab { color: @muted; border-bottom-width: 2px; }
+QTabBar#LauncherCategories::tab:selected { color: @tab-indicator; font-weight: 600; }
+QTabBar#LauncherCategories::tab:hover { background: transparent; color: @text; }
+QTabBar#LauncherCategories::tab:selected:hover { color: @tab-indicator; }
+QListWidget#LauncherSearchResults::item { border-radius: 4px; padding: 4px 6px; }
+QListWidget#LauncherSearchResults::item:hover { background: @surface-hover; }
+QListWidget#LauncherSearchResults::item:selected { background: @surface-selected; }
 QTabBar::scroller { width: 0px; }
 QToolButton#TabScroll { border: none; border-radius: 0; background: transparent; padding: 0; }
-QToolButton#TabScroll:hover { background: @surface-hover; }
+QToolButton#TabScroll:hover { background: transparent; border: 1px solid @border-strong; border-radius: 4px; }
 QScrollBar:vertical { width: 8px; background: transparent; margin: 0; }
 QScrollBar::handle:vertical { background: @scrollbar; border-radius: 2px; min-height: 24px; margin: 0 2px; }
 QScrollBar::handle:vertical:hover { background: @muted; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
-QToolTip { color: palette(tooltip-text); }
 QCheckBox { spacing: 8px; }
 QGroupBox { border: 1px solid @border; border-radius: 4px; margin-top: 16px; padding-top: 10px; }
 QGroupBox::title { subcontrol-origin: margin; left: 10px; }

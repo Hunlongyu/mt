@@ -9,6 +9,7 @@
 #include <QGuiApplication>
 #include <QScreen>
 #include <QTimer>
+#include <QWidget>
 
 namespace mt {
 GestureController::GestureController(Theme& theme, QString root, bool preview,
@@ -41,6 +42,37 @@ GestureController::~GestureController() {
     input_.setBlocked(true);
     if (jobs_) jobs_->shutdown();
     hide();
+}
+void GestureController::setLauncherWindow(QWidget* window) {
+    if (launcherWindow_ == window) return;
+    if (launcherWindow_) launcherWindow_->removeEventFilter(this);
+    input_.setLauncherWindow(0);
+    launcherWindow_ = window;
+    if (window) window->installEventFilter(this);
+    updateLauncherWindow();
+}
+void GestureController::updateLauncherWindow() {
+    input_.setLauncherWindow(launcherWindow_ && launcherWindow_->isVisible()
+                                 ? quintptr(launcherWindow_->internalWinId()) : 0);
+}
+bool GestureController::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == launcherWindow_) {
+        switch (event->type()) {
+        case QEvent::Show:
+            input_.setLauncherWindow(quintptr(launcherWindow_->internalWinId()));
+            break;
+        case QEvent::WinIdChange:
+            updateLauncherWindow();
+            break;
+        case QEvent::Hide:
+        case QEvent::Destroy:
+            input_.setLauncherWindow(0);
+            hide();
+            break;
+        default: break;
+        }
+    }
+    return QObject::eventFilter(watched, event);
 }
 void GestureController::hide() {
     for (const auto& overlay : overlays_) overlay->dismiss();
@@ -90,8 +122,12 @@ void GestureController::receive(const GestureFrame& frame) {
     const auto actions = rules_.forProcess(frame.process);
     const auto recognition = recognizer.match(actions.keys());
     const auto match = actions.constFind(recognition.key);
+    // The restricted helper deliberately rejects its parent process. Launcher
+    // actions belong to the GUI process even when administrator support is on.
+    const bool useAdmin = settings_.adminSupport && admin_ && admin_->ready() &&
+                         frame.target.processId != quint32(QCoreApplication::applicationPid());
     const bool actionable =
-        match != actions.end() && ((settings_.adminSupport && admin_ && admin_->ready()) ||
+        match != actions.end() && (useAdmin ||
                                    actions_.available(*match, frame.target));
     // A retained completion may still execute, but must never repaint its old
     // path after another physical press has started a new stroke.
@@ -144,7 +180,7 @@ void GestureController::receive(const GestureFrame& frame) {
                    cancellation == input_.cancellation() && !blocked_() &&
                    GestureInput::isCurrent(frame);
         });
-    } else if (settings_.adminSupport && admin_ && admin_->ready()) {
+    } else if (useAdmin) {
         admin_->gesture(*match, frame.target, frame.foregroundAtStart, this, [this](auto result) {
             if (!result)
                 Q_EMIT failed(result.error());

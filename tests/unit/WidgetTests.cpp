@@ -6,6 +6,7 @@
 #include "ui/components/Placement.h"
 #include "ui/components/Theme.h"
 #include "ui/shell/SettingsDialog.h"
+#include "ui/shell/SettingsControls.h"
 #include "platform/windows/LockPassword.h"
 #include "platform/windows/DesktopServices.h"
 #include <QCheckBox>
@@ -28,14 +29,18 @@
 #include <QScrollBar>
 #include <QScrollArea>
 #include <QScreen>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QStyleFactory>
+#include <QStyleHints>
 #include <QTabWidget>
 #include <QMessageBox>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QToolButton>
+#include <QToolTip>
 #include <QVariantAnimation>
 #include <QWindow>
 #include <QtPlugin>
@@ -475,7 +480,7 @@ class WidgetTests final : public QObject {
         clipboard.setPanelOpacity(settings.clipboardOpacity);
         auto closeEnough = [](qreal a, qreal b) { return std::abs(a - b) <= 1.0 / 255; };
         bool saved = false;
-        SettingsDialog cancelled(theme, settings, QStringLiteral("fixture"),
+        SettingsDialog cancelled(theme, settings,
                                  [&](const Settings&, SettingsDialog::Completion done) {
                                      saved = true;
                                      done({});
@@ -511,7 +516,7 @@ class WidgetTests final : public QObject {
         launcher.hide();
         clipboard.hide();
         Settings persisted;
-        SettingsDialog accepted(theme, settings, QStringLiteral("fixture"),
+        SettingsDialog accepted(theme, settings,
                                 [&](const Settings& next, SettingsDialog::Completion done) {
                                     persisted = next;
                                     saved = true;
@@ -752,11 +757,89 @@ class WidgetTests final : public QObject {
         QApplication::processEvents();
         QVERIFY(left->isHidden() && right->isHidden());
     }
+    void settingsDropdownShowsOptionsAndSelects_data() {
+        QTest::addColumn<QString>("mode");
+        QTest::addColumn<int>("itemCount");
+        for (const auto* theme : {"light", "dark"})
+            for (int count : {2, 3, 4, 22})
+                QTest::newRow(qPrintable(QStringLiteral("%1-%2").arg(theme).arg(count)))
+                    << QString::fromLatin1(theme) << count;
+    }
+    void settingsDropdownShowsOptionsAndSelects() {
+        QFETCH(QString, mode);
+        QFETCH(int, itemCount);
+        // Match the production application's base style, including its popup policy.
+        qApp->setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+        Theme theme;
+        theme.apply(mode);
+        QDialog host;
+        auto* layout = new QVBoxLayout(&host);
+        auto* combo = new settingsui::ComboBox(theme);
+        combo->setMinimumWidth(166);
+        for (int i = 0; i < itemCount; ++i)
+            combo->addItem(QStringLiteral("选项 %1").arg(i + 1), i);
+        layout->addWidget(combo);
+        host.resize(300, 180);
+        host.move(host.screen()->availableGeometry().center() - host.rect().center());
+        host.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&host));
+        combo->showPopup();
+        auto* view = combo->view();
+        QTRY_VERIFY(view->isVisible());
+        QTest::qWait(180);
+        if (nativeCornersAvailable())
+            QVERIFY(view->window()->property("systemMenuFrame").toBool());
+        const auto folder = qEnvironmentVariable("MT_COMBO_RENDER_DIR");
+        if (!folder.isEmpty()) {
+            QVERIFY(QDir().mkpath(folder));
+            QVERIFY(renderSurface(*view->window()).save(QDir(folder).filePath(
+                QStringLiteral("combo-%1-%2.png").arg(mode).arg(itemCount))));
+        }
+        const auto last = combo->model()->index(itemCount - 1, 0);
+        if (itemCount <= 4) {
+            const auto row = view->visualRect(last);
+            QVERIFY2(view->viewport()->rect().contains(row),
+                     qPrintable(QStringLiteral("%1 items: popup %2x%3, viewport %4x%5, last row y=%6 h=%7")
+                                    .arg(itemCount).arg(view->window()->width()).arg(view->window()->height())
+                                    .arg(view->viewport()->width()).arg(view->viewport()->height())
+                                    .arg(row.y()).arg(row.height())));
+            QCOMPARE(view->verticalScrollBar()->maximum(), 0);
+        } else
+            QVERIFY(view->verticalScrollBar()->maximum() > 0);
+        QSignalSpy activated(combo, &QComboBox::activated);
+        QTest::keyClick(view, Qt::Key_End);
+        QTRY_VERIFY(view->viewport()->rect().contains(view->visualRect(last)));
+        QTest::keyClick(view, Qt::Key_Return);
+        QTRY_VERIFY(!view->isVisible());
+        QCOMPARE(combo->currentIndex(), itemCount - 1);
+        QCOMPARE(activated.count(), 1);
+        const auto screen = host.screen()->availableGeometry();
+        host.move(screen.right() - host.width(), screen.bottom() - host.height());
+        combo->showPopup();
+        QTRY_VERIFY(view->isVisible());
+        // Qt may use the full monitor for popups, including the taskbar area.
+        QVERIFY(host.screen()->geometry().contains(view->window()->geometry()));
+        QTest::keyClick(view, Qt::Key_Home);
+        QTest::keyClick(view, Qt::Key_Escape);
+        QTRY_VERIFY(!view->isVisible());
+        QCOMPARE(combo->currentIndex(), itemCount - 1);
+        QCOMPARE(activated.count(), 1);
+        combo->showPopup();
+        QTRY_VERIFY(view->isVisible());
+        QTest::keyClick(view, Qt::Key_Home);
+        const auto first = combo->model()->index(0, 0);
+        QTRY_VERIFY(view->viewport()->rect().contains(view->visualRect(first)));
+        QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier,
+                          view->visualRect(first).center());
+        QTRY_VERIFY(!view->isVisible());
+        QCOMPARE(combo->currentIndex(), 0);
+        QCOMPARE(activated.count(), 2);
+    }
     void settingsSaveKeepsWindowAndCancelUsesLatestBaseline() {
         Theme theme; theme.apply(QStringLiteral("dark"));
         SettingsDialog::Completion finish;
         Settings persisted;
-        SettingsDialog dialog(theme, Settings::defaults(), QStringLiteral("fixture"),
+        SettingsDialog dialog(theme, Settings::defaults(),
             [&](const Settings& next, SettingsDialog::Completion done) { persisted = next; finish = std::move(done); });
         dialog.show();
         auto* value = dialog.findChild<QSpinBox*>(QStringLiteral("launcherOpacity"));
@@ -778,7 +861,7 @@ class WidgetTests final : public QObject {
     }
     void settingsFailurePreservesDraftAndCloseCanBeCancelled() {
         Theme theme; theme.apply(QStringLiteral("dark"));
-        SettingsDialog dialog(theme, Settings::defaults(), QStringLiteral("fixture"),
+        SettingsDialog dialog(theme, Settings::defaults(),
             [](const Settings&, SettingsDialog::Completion done) { done(std::unexpected(QStringLiteral("模拟磁盘写入失败"))); });
         dialog.show();
         auto* value = dialog.findChild<QSpinBox*>(QStringLiteral("launcherOpacity")); value->setValue(80);
@@ -797,10 +880,14 @@ class WidgetTests final : public QObject {
     void settingsPagesFitAndRenderBothThemes() {
         qApp->setFont(DesktopServices::systemUiFont());
         Theme theme;
-        SettingsDialog dialog(theme, Settings::defaults(), QStringLiteral("fixture/settings-preview"),
+        SettingsDialog dialog(theme, Settings::defaults(),
             [](const Settings&, SettingsDialog::Completion done) { done({}); });
         auto* pages = dialog.findChild<QStackedWidget*>(QStringLiteral("settingsPages"));
-        QCOMPARE(pages->count(), 7);
+        QCOMPARE(pages->count(), 6);
+        QCOMPARE(pages->currentIndex(), 0);
+        QVERIFY(!dialog.findChild<QWidget*>(QStringLiteral("settingsDataRoot")));
+        QVERIFY(pages->currentWidget()->findChild<QPushButton*>(QStringLiteral("ThemeChoice")));
+        QVERIFY(pages->currentWidget()->findChild<QSpinBox*>(QStringLiteral("launcherOpacity")));
         QVERIFY(!dialog.findChild<QWidget*>(QStringLiteral("language")));
         dialog.show();
         const auto folder = qEnvironmentVariable("MT_SETTINGS_RENDER_DIR");
@@ -835,7 +922,7 @@ class WidgetTests final : public QObject {
         theme.apply(QStringLiteral("dark"));
         Settings settings = Settings::defaults();
         bool saved = false;
-        SettingsDialog dialog(theme, settings, QStringLiteral("fixture"),
+        SettingsDialog dialog(theme, settings,
                               [&](const Settings&, SettingsDialog::Completion done) {
                                   saved = true;
                                   done({});
@@ -855,7 +942,7 @@ class WidgetTests final : public QObject {
         theme.apply(QStringLiteral("dark"));
         Settings saved;
         bool applied = false;
-        SettingsDialog dialog(theme, Settings::defaults(), QStringLiteral("fixture"),
+        SettingsDialog dialog(theme, Settings::defaults(),
                               [&](const Settings& next, SettingsDialog::Completion done) {
                                   saved = next;
                                   applied = true;
@@ -875,7 +962,7 @@ class WidgetTests final : public QObject {
         const auto renderFolder = qEnvironmentVariable("MT_LOCK_RENDER_DIR");
         if (!renderFolder.isEmpty()) {
             QVERIFY(QDir().mkpath(renderFolder));
-            dialog.findChild<QStackedWidget*>(QStringLiteral("settingsPages"))->setCurrentIndex(5);
+            dialog.findChild<QStackedWidget*>(QStringLiteral("settingsPages"))->setCurrentIndex(4);
             dialog.show();
             for (const auto& modeName : {QStringLiteral("dark"), QStringLiteral("light")}) {
                 theme.apply(modeName);
@@ -893,7 +980,7 @@ class WidgetTests final : public QObject {
         QVERIFY(decoded);
         QCOMPARE(*decoded, QStringLiteral("Ab123"));
         bool keptPassword = false;
-        SettingsDialog again(theme, saved, QStringLiteral("fixture"),
+        SettingsDialog again(theme, saved,
                              [&](const Settings& next, SettingsDialog::Completion done) {
                                  keptPassword = next.protectedPassword == saved.protectedPassword;
                                  done({});
@@ -1101,6 +1188,67 @@ class WidgetTests final : public QObject {
         QCOMPARE(headerOf(launcher), Theme::headerHeight);
         QCOMPARE(headerOf(panel), Theme::headerHeight);
         QCOMPARE(launcher.height(), panel.height());
+    }
+    void tooltipsKeepSystemDefaultsAcrossAppThemes_data() {
+        QTest::addColumn<Qt::ColorScheme>("systemScheme");
+        QTest::newRow("system-light") << Qt::ColorScheme::Light;
+        QTest::newRow("system-dark") << Qt::ColorScheme::Dark;
+    }
+    void tooltipsKeepSystemDefaultsAcrossAppThemes() {
+        QFETCH(Qt::ColorScheme, systemScheme);
+        const bool fade = QApplication::isEffectEnabled(Qt::UI_FadeTooltip);
+        const bool animate = QApplication::isEffectEnabled(Qt::UI_AnimateTooltip);
+        const auto restoreEffects = qScopeGuard([=] {
+            QApplication::setEffectEnabled(Qt::UI_FadeTooltip, fade);
+            QApplication::setEffectEnabled(Qt::UI_AnimateTooltip, animate);
+            QToolTip::hideText();
+            qApp->styleHints()->unsetColorScheme();
+        });
+        QApplication::setEffectEnabled(Qt::UI_FadeTooltip, false);
+        QApplication::setEffectEnabled(Qt::UI_AnimateTooltip, false);
+        QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+        qApp->setFont(DesktopServices::systemUiFont());
+        qApp->setStyleSheet({});
+        // Override only this test process's platform hint, never Windows settings.
+        qApp->styleHints()->setColorScheme(systemScheme);
+        QTRY_COMPARE(qApp->styleHints()->colorScheme(), systemScheme);
+        QWidget host;
+        host.resize(240, 100);
+        host.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&host));
+        const auto text = QStringLiteral("钉钉\nC:/示例/钉钉.lnk");
+        const auto tooltipWidget = []() -> QWidget* {
+            for (auto* widget : QApplication::topLevelWidgets())
+                if (widget->objectName() == QStringLiteral("qtooltip_label") && widget->isVisible())
+                    return widget;
+            return nullptr;
+        };
+        QToolTip::showText(host.mapToGlobal(QPoint(20, 20)), text, &host);
+        QTRY_VERIFY(tooltipWidget());
+        const auto systemRendering = renderSurface(*tooltipWidget());
+        const auto systemPalette = tooltipWidget()->palette();
+        QToolTip::hideText();
+        QTRY_VERIFY(!QToolTip::isVisible());
+        Theme theme;
+        const auto folder = qEnvironmentVariable("MT_TOOLTIP_RENDER_DIR");
+        if (!folder.isEmpty()) QVERIFY(QDir().mkpath(folder));
+        for (const auto& mode : {QStringLiteral("dark"), QStringLiteral("light")}) {
+            theme.apply(mode);
+            QToolTip::showText(host.mapToGlobal(QPoint(20, 20)), text, &host);
+            QTRY_VERIFY(tooltipWidget());
+            auto* tooltip = tooltipWidget();
+            const auto rendered = renderSurface(*tooltip);
+            if (!folder.isEmpty())
+                QVERIFY(rendered.save(QDir(folder).filePath(
+                    QStringLiteral("tooltip-%1-app-%2.png").arg(QString::fromLatin1(QTest::currentDataTag()), mode))));
+            QCOMPARE(tooltip->palette().color(QPalette::Inactive, QPalette::ToolTipBase),
+                     systemPalette.color(QPalette::Inactive, QPalette::ToolTipBase));
+            QCOMPARE(tooltip->palette().color(QPalette::Inactive, QPalette::ToolTipText),
+                     systemPalette.color(QPalette::Inactive, QPalette::ToolTipText));
+            QCOMPARE(rendered, systemRendering);
+            QToolTip::hideText();
+            QTRY_VERIFY(!QToolTip::isVisible());
+        }
     }
     void bothThemesSharePaletteRoles() {
         Theme theme;

@@ -38,7 +38,6 @@ struct SettingsDialog::Impl {
     Theme& theme;
     Settings saved, draft;
     Apply apply;
-    QString root;
     bool saving = false, prompting = false, closing = false;
     QStackedWidget* pages = nullptr;
     QLabel *status = nullptr, *error = nullptr;
@@ -48,9 +47,8 @@ struct SettingsDialog::Impl {
     QLabel* updateStatus = nullptr;
     QLabel* integrationStatus = nullptr;
     QPushButton *checkUpdate = nullptr, *installUpdate = nullptr, *cancelUpdate = nullptr;
-    Impl(SettingsDialog* owner, Theme& t, const Settings& initial, Apply a, QString path)
-        : q(owner), theme(t), saved(initial), draft(initial), apply(std::move(a)),
-          root(std::move(path)) {}
+    Impl(SettingsDialog* owner, Theme& t, const Settings& initial, Apply a)
+        : q(owner), theme(t), saved(initial), draft(initial), apply(std::move(a)) {}
     bool dirty() const {
         return draft.encode() != saved.encode() || (password && !password->text().isEmpty());
     }
@@ -140,8 +138,8 @@ struct SettingsDialog::Impl {
         });
         return w;
     }
-    QVBoxLayout* page(const QString& title, const QString& description,
-                      bool Settings::* enabled = nullptr, const char* name = "") {
+    QVBoxLayout* page(const QString& title, bool Settings::* enabled = nullptr,
+                      const char* name = "") {
         auto* w = new QWidget;
         auto* layout = new QVBoxLayout(w);
         layout->setContentsMargins(0, 0, 0, 0);
@@ -150,11 +148,7 @@ struct SettingsDialog::Impl {
         heading->setObjectName(QStringLiteral("SettingsHeading"));
         auto* line = new QHBoxLayout(heading);
         line->setContentsMargins(28, 24, 28, 6);
-        auto* text = new QVBoxLayout;
-        text->setSpacing(7);
-        text->addWidget(label(title, "SettingsPageTitle"));
-        text->addWidget(label(description, "SettingsDescription"));
-        line->addLayout(text, 1);
+        line->addWidget(label(title, "SettingsPageTitle"), 1);
         if (enabled) {
             auto* state =
                 label(draft.*enabled ? QStringLiteral("已启用") : QStringLiteral("未启用"),
@@ -218,7 +212,7 @@ struct SettingsDialog::Impl {
         chooser->open();
     }
     void buildGeneral();
-    void buildAppearance();
+    void buildAppearance(QVBoxLayout* layout);
     void buildLauncher();
     void buildClipboard();
     void buildGestures();
@@ -226,7 +220,7 @@ struct SettingsDialog::Impl {
     void buildAbout();
 };
 void SettingsDialog::Impl::buildGeneral() {
-    auto* layout = scroll(page(QStringLiteral("常规"), QStringLiteral("启动方式与数据位置。")));
+    auto* layout = scroll(page(QStringLiteral("常规")));
     auto* box = card(layout, QStringLiteral("启动与运行"));
     row(box, QStringLiteral("开机启动"),
         QStringLiteral("登录 Windows 后启动 MT，使用当前数据目录。"),
@@ -242,22 +236,10 @@ void SettingsDialog::Impl::buildGeneral() {
     integrationPadding->setContentsMargins(16, 0, 16, 12);
     integrationPadding->addWidget(integrationStatus);
     box->addLayout(integrationPadding);
-    box = card(layout, QStringLiteral("数据位置"));
-    row(box, QStringLiteral("设置与功能数据"), QStringLiteral("当前实例使用以下目录。"), nullptr);
-    auto* path = new QLineEdit(QDir::toNativeSeparators(root));
-    path->setReadOnly(true);
-    path->setObjectName(QStringLiteral("settingsDataRoot"));
-    path->setAccessibleName(QStringLiteral("数据目录"));
-    auto* padding = new QHBoxLayout;
-    padding->setContentsMargins(16, 0, 16, 8);
-    padding->addWidget(path);
-    box->addLayout(padding);
-    note(box, QStringLiteral("旧工具的数据导入位于对应功能页。"));
-    note(layout, QStringLiteral("快捷键可在对应功能中修改；更改后统一保存。"));
+    layout->addSpacing(6);
+    buildAppearance(layout);
 }
-void SettingsDialog::Impl::buildAppearance() {
-    auto* layout =
-        scroll(page(QStringLiteral("外观"), QStringLiteral("让 MT 更符合你的使用习惯。")));
+void SettingsDialog::Impl::buildAppearance(QVBoxLayout* layout) {
     auto* heading = new QHBoxLayout;
     heading->addWidget(label(QStringLiteral("主题"), "SettingsSection"));
     heading->addStretch();
@@ -321,23 +303,18 @@ void SettingsDialog::Impl::buildAppearance() {
         line->addWidget(value);
         return w;
     };
-    row(box, QStringLiteral("启动面板"), QStringLiteral("面板及附属搜索框使用相同不透明度。"),
+    row(box, QStringLiteral("启动面板与搜索框"), {},
         opacity(&Settings::launcherOpacity, "launcherOpacity", 30));
-    row(box, QStringLiteral("剪贴板"), QStringLiteral("调低后可以看到面板后方的内容。"),
+    row(box, QStringLiteral("剪贴板"), {},
         opacity(&Settings::clipboardOpacity, "clipboardOpacity", 60));
-    note(box, QStringLiteral("100% 为完全不透明。设置窗口始终保持不透明。"));
-    box = card(layout, QStringLiteral("字体与图标"));
-    row(box, QStringLiteral("清晰、熟悉、恰到好处。"),
-        QStringLiteral("跟随 Windows 系统字体 · Lucide 线性图标"), nullptr);
 }
 void SettingsDialog::Impl::buildLauncher() {
     auto* sections =
-        tabs(page(QStringLiteral("启动面板"), QStringLiteral("快捷打开应用、文件和常用位置。"),
-                  &Settings::launcherEnabled, "launcherEnabled"),
+        tabs(page(QStringLiteral("启动面板"), &Settings::launcherEnabled, "launcherEnabled"),
              "launcherTabs");
     auto* layout = tab(sections, QStringLiteral("常规"));
     auto* box = card(layout, QStringLiteral("唤起与显示"));
-    row(box, QStringLiteral("唤起快捷键"), QStringLiteral("显示或隐藏启动面板。"),
+    row(box, QStringLiteral("唤起快捷键"), {},
         shortcut(&Settings::launcherHotkey, "launcherHotkey"));
     row(box, QStringLiteral("保持面板打开"), QStringLiteral("打开项目或切换到其他窗口后保持显示。"),
         toggle(&Settings::launcherPinned, "launcherPinned", QStringLiteral("保持面板打开")));
@@ -352,7 +329,7 @@ void SettingsDialog::Impl::buildLauncher() {
     auto* columns =
         number(&Settings::launcherColumns, "launcherColumns", 3, 20, QStringLiteral(" 列"));
     auto* rows = number(&Settings::launcherRows, "launcherRows", 3, 20, QStringLiteral(" 行"));
-    row(box, QStringLiteral("列数"), QStringLiteral("每行显示的槽位数量。"), columns);
+    row(box, QStringLiteral("列数"), {}, columns);
     row(box, QStringLiteral("行数"), QStringLiteral("面板高度随行数调整。"), rows);
     auto* grid = new GridPreview(theme);
     grid->setObjectName(QStringLiteral("launcherGridPreview"));
@@ -371,7 +348,7 @@ void SettingsDialog::Impl::buildLauncher() {
     QObject::connect(columns, &QSpinBox::valueChanged, q, update);
     QObject::connect(rows, &QSpinBox::valueChanged, q, update);
     update();
-    note(box, QStringLiteral("默认 4 列 × 7 行，分类固定在底部。保存后重新排列现有项目。"));
+    note(box, QStringLiteral("更改列数会重新排列现有项目。"));
     layout = tab(sections, QStringLiteral("边缘唤起"));
     box = card(layout, QStringLiteral("屏幕边缘"));
     auto* enabled = toggle(&Settings::launcherEdgeEnabled, "launcherEdgeEnabled",
@@ -425,7 +402,7 @@ void SettingsDialog::Impl::buildLauncher() {
         combo(&Settings::launcherEdgeMode, "launcherEdgeMode",
               {{QStringLiteral("outer"), QStringLiteral("仅桌面最外缘")},
                {QStringLiteral("every"), QStringLiteral("每个显示器边缘")}}));
-    row(box, QStringLiteral("全屏时暂停唤起"), QStringLiteral("减少游戏、视频播放时的误触。"),
+    row(box, QStringLiteral("全屏时暂停唤起"), {},
         toggle(&Settings::launcherEdgeSuppressFullscreen, "launcherEdgeSuppressFullscreen",
                QStringLiteral("全屏时暂停唤起")));
     box = card(layout, QStringLiteral("程序规则"));
@@ -438,16 +415,15 @@ void SettingsDialog::Impl::buildLauncher() {
 }
 void SettingsDialog::Impl::buildClipboard() {
     auto* sections =
-        tabs(page(QStringLiteral("剪贴板"), QStringLiteral("找回复制过的内容，快速粘贴。"),
-                  &Settings::clipboardEnabled, "clipboardEnabled"),
+        tabs(page(QStringLiteral("剪贴板"), &Settings::clipboardEnabled, "clipboardEnabled"),
              "clipboardTabs");
     auto* layout = tab(sections, QStringLiteral("常规"));
     auto* box = card(layout, QStringLiteral("唤起与粘贴"));
-    row(box, QStringLiteral("唤起快捷键"), QStringLiteral("显示或隐藏剪贴板面板。"),
+    row(box, QStringLiteral("唤起快捷键"), {},
         shortcut(&Settings::clipboardHotkey, "clipboardHotkey"));
     row(box, QStringLiteral("确认后自动粘贴"), QStringLiteral("关闭后，确认条目仅复制到剪贴板。"),
         toggle(&Settings::pasteOnConfirm, "pasteOnConfirm", QStringLiteral("确认后自动粘贴")));
-    row(box, QStringLiteral("全屏时暂停唤起"), QStringLiteral("避免打断正在使用的全屏程序。"),
+    row(box, QStringLiteral("全屏时暂停唤起"), {},
         toggle(&Settings::clipboardSuppressFullscreen, "clipboardSuppressFullscreen",
                QStringLiteral("全屏时暂停唤起")));
     row(box, QStringLiteral("面板位置"), QStringLiteral("优先跟随文本光标；未找到时使用此位置。"),
@@ -526,9 +502,7 @@ void SettingsDialog::Impl::buildClipboard() {
     });
 }
 void SettingsDialog::Impl::buildGestures() {
-    auto* layout =
-        page(QStringLiteral("鼠标手势"), QStringLiteral("按住鼠标键移动，松开执行动作。"),
-             &Settings::gesturesEnabled, "gesturesEnabled");
+    auto* layout = page(QStringLiteral("鼠标手势"), &Settings::gesturesEnabled, "gesturesEnabled");
     gestures = new GestureSettings(theme, draft, q);
     layout->addWidget(gestures, 1);
     QObject::connect(gestures, &GestureSettings::changed, q, [this] {
@@ -539,20 +513,18 @@ void SettingsDialog::Impl::buildGestures() {
     });
 }
 void SettingsDialog::Impl::buildLock() {
-    auto* layout =
-        scroll(page(QStringLiteral("黑屏遮挡"), QStringLiteral("临时遮挡全部屏幕，并保持唤醒。"),
-                    &Settings::lockEnabled, "lockEnabled"));
+    auto* layout = scroll(page(QStringLiteral("锁屏"), &Settings::lockEnabled, "lockEnabled"));
     auto* box = card(layout, QStringLiteral("启动与暂停"));
-    row(box, QStringLiteral("锁定快捷键"), QStringLiteral("开启遮挡；简单模式下也用于解锁。"),
+    row(box, QStringLiteral("锁屏快捷键"), QStringLiteral("简单模式下也可用于解锁。"),
         shortcut(&Settings::lockHotkey, "lockHotkey"));
-    row(box, QStringLiteral("暂停黑屏功能"), QStringLiteral("暂时停用快捷键与托盘入口。"),
-        toggle(&Settings::lockPaused, "lockPaused", QStringLiteral("暂停黑屏功能")));
+    row(box, QStringLiteral("暂停锁屏"), QStringLiteral("暂时停用快捷键与托盘入口。"),
+        toggle(&Settings::lockPaused, "lockPaused", QStringLiteral("暂停锁屏")));
     layout->addSpacing(6);
     layout->addWidget(label(QStringLiteral("解锁方式"), "SettingsSection"));
     auto* modes = new QHBoxLayout;
     auto* group = new QButtonGroup(q);
-    auto* simple = new QCheckBox(QStringLiteral("简单解锁\n按 Enter 或再次按快捷键"));
-    auto* protectedMode = new QCheckBox(QStringLiteral("密码解锁\n输入密码后按 Enter"));
+    auto* simple = new QCheckBox(QStringLiteral("简单解锁\n按回车或再次按快捷键"));
+    auto* protectedMode = new QCheckBox(QStringLiteral("密码解锁\n输入密码后按回车"));
     simple->setObjectName(QStringLiteral("simpleUnlock"));
     protectedMode->setObjectName(QStringLiteral("requirePassword"));
     for (auto* w : {simple, protectedMode}) {
@@ -573,7 +545,7 @@ void SettingsDialog::Impl::buildLock() {
                                      ? QStringLiteral("1–128 位英文字母或数字")
                                      : QStringLiteral("已设置密码；留空保留"));
     row(box, QStringLiteral("解锁密码"),
-        QStringLiteral("区分大小写，使用当前 Windows 用户保护保存。"), password);
+        QStringLiteral("区分大小写；留空保留原密码。"), password);
     auto* modeNote = label({}, "lockModeNote");
     modeNote->setContentsMargins(16, 0, 16, 12);
     box->addWidget(modeNote);
@@ -582,30 +554,21 @@ void SettingsDialog::Impl::buildLock() {
         password->setEnabled(draft.requirePassword);
         modeNote->setText(
             draft.requirePassword
-                ? QStringLiteral("密码模式：输入密码后按回车解锁。再次按锁定快捷键不会解锁。Esc "
-                                 "清空输入，Backspace 删除一位。")
-                : QStringLiteral(
-                      "简单模式：按回车或再次按锁定快捷键解锁。请先松开锁定时按住的按键。"));
+                ? QStringLiteral("密码模式：再次按快捷键不会解锁。Esc 清空输入，Backspace 删除一位。")
+                : QStringLiteral("简单模式：请先松开锁屏时按住的按键，再按解锁键。"));
         changed();
     };
     QObject::connect(protectedMode, &QCheckBox::toggled, q, update);
     update();
     QObject::connect(password, &QLineEdit::textChanged, q, [this] { changed(); });
-    box = card(layout, QStringLiteral("遮挡期间"));
-    row(box, QStringLiteral("覆盖全部显示器"), {},
-        label(QStringLiteral("始终启用"), "SettingsDescription"));
-    row(box, QStringLiteral("保持系统和显示器唤醒"), {},
-        label(QStringLiteral("始终启用"), "SettingsDescription"));
     note(layout,
          QStringLiteral(
-             "黑屏遮挡不等同于 Windows 账户锁定。应急时可按 Ctrl + Alt + Del；MT 将解除遮挡。"));
+             "此功能仅遮挡屏幕，不锁定 Windows 账户。应急时按 Ctrl + Alt + Del 退出。"));
 }
 void SettingsDialog::Impl::buildAbout() {
-    auto* layout =
-        scroll(page(QStringLiteral("关于 MT"), QStringLiteral("my tool · 让日常操作更顺手")));
+    auto* layout = scroll(page(QStringLiteral("关于 MT")));
     auto* box = card(layout);
-    row(box, QStringLiteral("MT · my tool"),
-        QStringLiteral("一个轻巧的入口，安放常用的工具。\n启动面板、剪贴板、鼠标手势与黑屏遮挡。"),
+    row(box, QStringLiteral("MT · my tool"), {},
         label(QStringLiteral("版本 ") + QCoreApplication::applicationVersion(),
               "SettingsDescription"));
     box = card(layout, QStringLiteral("软件更新"));
@@ -618,6 +581,7 @@ void SettingsDialog::Impl::buildAbout() {
     row(box, QStringLiteral("GitHub Releases"), {}, updateStatus);
     auto* actions = new QHBoxLayout;
     actions->setContentsMargins(16, 0, 16, 12);
+    actions->setSpacing(8);
     checkUpdate = new QPushButton(QStringLiteral("检查更新"));
     checkUpdate->setObjectName(QStringLiteral("checkUpdate"));
     installUpdate = new QPushButton(QStringLiteral("下载更新"));
@@ -626,6 +590,7 @@ void SettingsDialog::Impl::buildAbout() {
     cancelUpdate->setObjectName(QStringLiteral("cancelUpdate"));
     for (auto* button : {checkUpdate, installUpdate, cancelUpdate}) {
         button->setAutoDefault(false);
+        button->setMinimumWidth(88);
         button->setEnabled(false);
         actions->addWidget(button);
     }
@@ -638,7 +603,7 @@ void SettingsDialog::Impl::buildAbout() {
     auto* license = new QPushButton(QStringLiteral("查看许可"));
     iconButton(license, theme, Symbol::Open);
     row(box, QStringLiteral("MT、Qt 与第三方组件"),
-        QStringLiteral("MT · MIT；Qt · LGPL 3；Lucide · ISC。允许修改并重新链接 Qt。"), license);
+        QStringLiteral("MT · MIT；Qt · LGPL 3；Lucide · ISC。"), license);
     QObject::connect(license, &QPushButton::clicked, q, [this] {
         auto* dialog = new QDialog(q);
         dialog->setAttribute(Qt::WA_DeleteOnClose);
@@ -664,10 +629,9 @@ void SettingsDialog::Impl::buildAbout() {
         QObject::connect(close, &QPushButton::clicked, dialog, &QDialog::accept);
         dialog->open();
     });
-    note(layout, QStringLiteral("原生 Qt 设置界面 · 所有设置在保存后统一生效，外观支持即时预览。"));
 }
 bool SettingsDialog::hasUnsavedChanges() const { return d->dirty() || d->saving; }
-void SettingsDialog::showUpdatePage() { d->pages->setCurrentIndex(6); }
+void SettingsDialog::showAboutPage() { d->pages->setCurrentIndex(5); }
 void SettingsDialog::setUpdateStatus(const QString& message, bool canCheck, bool canUpdate,
                                      bool ready, bool canCancel) {
     d->updateStatus->setText(message);
@@ -677,11 +641,10 @@ void SettingsDialog::setUpdateStatus(const QString& message, bool canCheck, bool
     d->cancelUpdate->setEnabled(canCancel);
     d->cancelUpdate->setText(QStringLiteral("取消"));
 }
-SettingsDialog::SettingsDialog(Theme& theme, const Settings& settings, const QString& root,
-                               Apply apply, QWidget* parent)
-    : QDialog(parent), d(std::make_unique<Impl>(this, theme, settings, std::move(apply), root)) {
+SettingsDialog::SettingsDialog(Theme& theme, const Settings& settings, Apply apply, QWidget* parent)
+    : QDialog(parent), d(std::make_unique<Impl>(this, theme, settings, std::move(apply))) {
     setObjectName(QStringLiteral("SettingsDialog"));
-    setWindowTitle(QStringLiteral("MT · 设置"));
+    setWindowTitle(QStringLiteral("设置"));
     auto settingsFont = font();
     settingsFont.setPixelSize(13);
     setFont(settingsFont);
@@ -712,22 +675,22 @@ SettingsDialog::SettingsDialog(Theme& theme, const Settings& settings, const QSt
     outer->addWidget(sidebar);
     outer->addWidget(right, 1);
     auto* group = new QButtonGroup(this);
-    const QStringList titles{QStringLiteral("常规"),     QStringLiteral("外观"),
+    const QStringList titles{QStringLiteral("常规"),
                              QStringLiteral("启动面板"), QStringLiteral("剪贴板"),
-                             QStringLiteral("鼠标手势"), QStringLiteral("黑屏遮挡"),
+                             QStringLiteral("鼠标手势"), QStringLiteral("锁屏"),
                              QStringLiteral("关于 MT")};
-    const QList<Symbol> icons{Symbol::Settings, Symbol::Palette,    Symbol::Grid, Symbol::Copy,
+    const QList<Symbol> icons{Symbol::Settings, Symbol::Grid, Symbol::Copy,
                               Symbol::Gesture,  Symbol::MonitorOff, Symbol::Info};
     for (int i = 0; i < titles.size(); ++i) {
-        if (i == 0 || i == 2) {
-            if (i == 2)
+        if (i == 0 || i == 1) {
+            if (i == 1)
                 nav->addSpacing(18);
             auto* heading = label(i == 0 ? QStringLiteral("偏好设置") : QStringLiteral("功能"),
                                   "SettingsNavGroup");
             heading->setContentsMargins(12, 3, 0, 9);
             nav->addWidget(heading);
         }
-        if (i == 6)
+        if (i == 5)
             nav->addStretch();
         auto* button = new QPushButton(QStringLiteral("  ") + titles[i]);
         button->setObjectName(QStringLiteral("SettingsNav"));
@@ -741,8 +704,11 @@ SettingsDialog::SettingsDialog(Theme& theme, const Settings& settings, const QSt
         connect(button, &QPushButton::clicked, d->pages,
                 [this, i] { d->pages->setCurrentIndex(i); });
     }
+    connect(d->pages, &QStackedWidget::currentChanged, group, [group](int index) {
+        if (auto* button = group->button(index))
+            button->setChecked(true);
+    });
     d->buildGeneral();
-    d->buildAppearance();
     d->buildLauncher();
     d->buildClipboard();
     d->buildGestures();
@@ -775,8 +741,8 @@ SettingsDialog::SettingsDialog(Theme& theme, const Settings& settings, const QSt
     line->addWidget(d->buttons);
     footerLayout->addLayout(line);
     main->addWidget(footer);
-    group->button(1)->setChecked(true);
-    d->pages->setCurrentIndex(1);
+    group->button(0)->setChecked(true);
+    d->pages->setCurrentIndex(0);
     d->changed();
     connect(qApp->styleHints(), &QStyleHints::colorSchemeChanged, this, [this] {
         if (d->draft.theme == QStringLiteral("auto"))

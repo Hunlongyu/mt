@@ -5,6 +5,7 @@
 #include <QIcon>
 #include <QSet>
 class QGridLayout;
+class QLabel;
 class QLineEdit;
 class QListWidget;
 class QTabBar;
@@ -30,8 +31,10 @@ class LauncherPanel final : public Panel {
     void retranslate();
     void fitToWorkArea(const QRect& area);
     void showNear(QPoint anchor, bool activate = true);
+    void showCentered(QPoint center, bool activate = true);
     void acceptIcon(const QString& id, const QString& source, const QImage& image);
   Q_SIGNALS:
+    void iconPriorityChanged(const QStringList& ids);
     void launchRequested(mt::LaunchItem item);
     void revealRequested(const QString& target);
     void importRequested(QStringList paths, QString category, int slot);
@@ -66,6 +69,7 @@ class LauncherPanel final : public Panel {
     void changeCategory(int direction);
     void showSearch(const QString& initial = {});
     void updateSearch(bool preserveSelection = false);
+    void requestSearchIcons();
     void positionSearch();
     // Mirrors the tab bar's own scroll state onto the chevrons at either end.
     void updateTabArrows();
@@ -73,6 +77,8 @@ class LauncherPanel final : public Panel {
     void finishTabInteraction();
     void commitTabOrder();
     void applyTileStyle();
+    void clearTilePresses();
+    void updateHoverTitle();
     void focusSelected();
     void changePage(int direction);
     int lastPage() const {
@@ -98,6 +104,8 @@ class LauncherPanel final : public Panel {
     QToolButton* pin_;
     QToolButton* menuButton_ = nullptr;
     QToolButton* closeButton_ = nullptr;
+    QLabel* hoverTitle_ = nullptr;
+    int hoveredTile_ = -1;
     QTabBar* tabs_;
     QToolButton* tabLeft_ = nullptr;
     QToolButton* tabRight_ = nullptr;
@@ -109,6 +117,7 @@ class LauncherPanel final : public Panel {
     QWidget* searchPopup_ = nullptr;
     QLineEdit* search_ = nullptr;
     QListWidget* results_ = nullptr;
+    QLabel* searchEmpty_ = nullptr;
     QHash<QString, QPair<QString, QIcon>> icons_;
     QHash<QString, QString> pendingIcons_;
     bool iconsReady_ = false;

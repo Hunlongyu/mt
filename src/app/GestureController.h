@@ -5,7 +5,9 @@
 #include "platform/windows/GestureActions.h"
 #include <functional>
 #include <memory>
+#include <QPointer>
 #include <vector>
+class QWidget;
 namespace mt {
 class GestureOverlay;
 class ShellJobs;
@@ -20,6 +22,7 @@ class GestureController final : public QObject {
     std::expected<void, QString> configure(const Settings& settings);
     void blockNow();
     bool hasActiveActions() const;
+    void setLauncherWindow(QWidget* window);
     void setAdminBridge(AdminBridge* bridge) {
         admin_ = bridge;
     }
@@ -27,6 +30,8 @@ class GestureController final : public QObject {
     void failed(const QString& message);
     void recognized(const QString& directions, const QString& action);
   private:
+    bool eventFilter(QObject*, QEvent*) override;
+    void updateLauncherWindow();
     void receive(const GestureFrame& frame);
     void hide();
     Theme& theme_;
@@ -36,6 +41,7 @@ class GestureController final : public QObject {
     Settings settings_;
     GestureRules rules_;
     GestureInput input_;
+    QPointer<QWidget> launcherWindow_;
     GestureActions actions_;
     AdminBridge* admin_ = nullptr;
     std::unique_ptr<ShellJobs> jobs_;

@@ -1,6 +1,7 @@
 #include "SettingsControls.h"
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QListView>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPlainTextEdit>
@@ -28,6 +29,12 @@ void paintChevron(QPainter& painter, const Theme& theme, const QRect& area, int 
 ComboBox::ComboBox(Theme& theme, QWidget* parent) : QComboBox(parent), theme_(theme) {
     setProperty("settingsControl", true);
     setFixedHeight(34);
+    auto* list = new QListView(this);
+    list->setObjectName(QStringLiteral("SettingsComboPopup"));
+    list->setUniformItemSizes(true);
+    setView(list);
+    list->window()->setProperty("settingsComboPopup", true);
+    setMaxVisibleItems(10);
     connect(&theme_, &Theme::changed, this, qOverload<>(&QWidget::update));
 }
 void ComboBox::paintEvent(QPaintEvent* event) {
@@ -328,6 +335,12 @@ QLabel#SettingsDescription, QLabel#SettingsNavGroup, QLabel#SettingsNote { font-
 QLabel#SettingsSection { font-size: 13px; font-weight: 600; padding-top: 3px; }
 QLabel#SettingsFieldLabel { font-size: 12px; }
 QComboBox[settingsControl="true"], QSpinBox[settingsControl="true"] { background: @field; border: 1px solid @border-strong; border-radius: 4px; padding: 0px 32px 0px 10px; font-size: 12px; }
+/* Apply before the subclass sets properties, so Qt creates a list popup without menu spacers. */
+QComboBox { combobox-popup: 0; }
+QListView#SettingsComboPopup { background: @surface-raised; color: @text; border: 1px solid @window-border; padding: 4px; outline: none; }
+QListView#SettingsComboPopup::item { min-height: 30px; padding: 0px 10px; border: none; border-radius: 4px; }
+QListView#SettingsComboPopup::item:hover, QListView#SettingsComboPopup::item:selected { background: @surface-hover; color: @text; }
+QListView#SettingsComboPopup::item:disabled { color: @faint; background: transparent; }
 /* Qt reserves the spin button width separately from the content padding. */
 QSpinBox[settingsControl="true"] { padding-right: 6px; }
 QComboBox[settingsControl="true"]:hover, QSpinBox[settingsControl="true"]:hover { border-color: @muted; }

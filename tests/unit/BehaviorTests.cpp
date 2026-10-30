@@ -32,6 +32,35 @@ using namespace mt;
 class BehaviorTests final : public QObject {
     Q_OBJECT
   private Q_SLOTS:
+    void organizationRenamePreservesExistingDataRoot() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const auto preferred = dir.filePath(QStringLiteral("dev.hly.com/mt"));
+        const auto legacy = dir.filePath(QStringLiteral("HunlongyuDevelopment/mt"));
+        QCOMPARE(compatibleDefaultDataRoot(preferred, legacy), preferred);
+        QVERIFY(!QFileInfo::exists(preferred));
+        QVERIFY(QDir().mkpath(legacy));
+        auto original = Settings::defaults();
+        original.launcherColumns = 9;
+        SettingsStore oldStore(legacy);
+        QVERIFY(oldStore.save(original));
+        QCOMPARE(compatibleDefaultDataRoot(preferred, legacy), legacy);
+        SettingsStore existing(compatibleDefaultDataRoot(preferred, legacy));
+        QVERIFY(existing.load());
+        QCOMPARE(existing.load()->launcherColumns, 9);
+        QVERIFY(!QFileInfo::exists(preferred));
+        QVERIFY(QDir().mkpath(preferred));
+        QCOMPARE(compatibleDefaultDataRoot(preferred, legacy), preferred);
+        // Even a damaged preferred profile must not silently select stale data.
+        QFile damaged(QDir(preferred).filePath(QStringLiteral("settings.json")));
+        QVERIFY(damaged.open(QIODevice::WriteOnly));
+        damaged.write("invalid json");
+        damaged.close();
+        SettingsStore selected(compatibleDefaultDataRoot(preferred, legacy));
+        QVERIFY(!selected.load());
+        QVERIFY(!selected.save(Settings::defaults()));
+        QCOMPARE(oldStore.load()->launcherColumns, 9);
+    }
     void opacitySettingsPreserveLegacyDefaultsAndRejectInvalidValues() {
         const auto legacy = Settings::decode(R"({"schema":1})");
         QVERIFY(legacy);

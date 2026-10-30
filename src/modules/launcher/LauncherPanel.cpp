@@ -30,6 +30,7 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSignalBlocker>
+#include <QStyle>
 #include <QTabBar>
 #include <QTimer>
 #include <QToolButton>
@@ -48,19 +49,24 @@ LauncherPanel::LauncherPanel(Theme& theme, LauncherService& service)
     auto* menu = theme.button(Symbol::Menu, tx(u"启动器菜单"), title);
     menuButton_ = menu;
     header->addWidget(menu);
-    header->addStretch();
-    auto* label = new QLabel(QStringLiteral("MT"), title);
+    auto* label = new QLabel(title);
+    hoverTitle_ = label;
     auto titleFont = label->font();
     titleFont.setPixelSize(13);
+    titleFont.setWeight(QFont::DemiBold);
     label->setFont(titleFont);
     label->setObjectName(QStringLiteral("PanelTitle"));
-    header->addWidget(label);
-    header->addStretch();
+    label->setTextFormat(Qt::PlainText);
+    label->setAlignment(Qt::AlignCenter);
+    label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    header->addWidget(label, 1);
     pin_ = theme.button(Symbol::Pin, tx(u"保持打开（Ctrl+Space）"), title, true);
     header->addWidget(pin_);
     auto* close = theme.button(Symbol::Close, tx(u"隐藏启动面板（Esc）"), title);
     closeButton_ = close;
     header->addWidget(close);
+    for (auto* action : {menu, pin_, close})
+        action->setObjectName(QStringLiteral("LauncherHeaderAction"));
     layoutColumn()->addWidget(title);
     enableTitleDrag(title);
     enableTitleDrag(label);
@@ -91,16 +97,21 @@ LauncherPanel::LauncherPanel(Theme& theme, LauncherService& service)
     gridScroll_->setFrameShape(QFrame::NoFrame);
     gridScroll_->setWidget(gridWidget_);
     gridScroll_->setWidgetResizable(false);
+    enableTitleDrag(gridWidget_);
+    enableTitleDrag(gridScroll_->viewport());
     layoutColumn()->addWidget(gridScroll_, 1);
     // The bar owns the rounded bottom corners; tabs stay inset with the grid so
     // the selected underline is straight, as in the original HLaunch.
     auto* bottomBar = new QWidget(this);
     bottomBar->setObjectName(QStringLiteral("BottomBar"));
     bottomBar->setAttribute(Qt::WA_StyledBackground);
+    enableTitleDrag(bottomBar);
     auto* bottomRow = new QHBoxLayout(bottomBar);
     bottomRow->setContentsMargins(9, 0, 9, 0);
     bottomRow->setSpacing(0);
     tabs_ = new QTabBar(bottomBar);
+    tabs_->setObjectName(QStringLiteral("LauncherCategories"));
+    tabs_->setAccessibleName(tx(u"启动项分类"));
     tabs_->setFocusPolicy(Qt::NoFocus);
     tabs_->installEventFilter(this);
     auto tabFont = tabs_->font();
@@ -185,14 +196,30 @@ LauncherPanel::LauncherPanel(Theme& theme, LauncherService& service)
     searchLayout->setSpacing(6);
     search_ = new QLineEdit(searchPopup_);
     search_->setPlaceholderText(tx(u"搜索所有分类"));
+    search_->setAccessibleName(tx(u"搜索启动项"));
     search_->setClearButtonEnabled(true);
     search_->installEventFilter(this);
     searchLayout->addWidget(search_);
     results_ = new QListWidget(searchPopup_);
+    results_->setObjectName(QStringLiteral("LauncherSearchResults"));
     results_->setAccessibleName(tx(u"跨分类搜索结果"));
+    results_->setIconSize(QSize(20, 20));
+    results_->setSpacing(2);
+    results_->setUniformItemSizes(true);
+    results_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    results_->setTextElideMode(Qt::ElideRight);
     results_->setMaximumHeight(210);
     results_->installEventFilter(this);
     searchLayout->addWidget(results_);
+    connect(results_->verticalScrollBar(), &QScrollBar::valueChanged,
+            this, &LauncherPanel::requestSearchIcons);
+    searchEmpty_ = new QLabel(tx(u"没有匹配的启动项\n换个关键词试试"), searchPopup_);
+    searchEmpty_->setObjectName(QStringLiteral("Muted"));
+    searchEmpty_->setAlignment(Qt::AlignCenter);
+    searchEmpty_->setWordWrap(true);
+    searchEmpty_->setMinimumHeight(64);
+    searchEmpty_->hide();
+    searchLayout->addWidget(searchEmpty_);
     connect(search_, &QLineEdit::textChanged, this, [this] { updateSearch(); });
     connect(results_, &QListWidget::itemActivated, this,
             [this](QListWidgetItem* item) { activateItem(item->data(Qt::UserRole).toString()); });
@@ -228,17 +255,21 @@ void LauncherPanel::setGrid(int columns, int rows) {
         return;
     // Keep the first visible slot on screen when the page size changes.
     const int first = page_ * qMax(1, pageSize());
+    hoveredTile_ = -1;
+    updateHoverTitle();
     qDeleteAll(tiles_);
     tiles_.clear();
     columns_ = columns;
     rows_ = rows;
     for (int i = 0; i < pageSize(); ++i) {
         auto* tile = new QToolButton(gridWidget_);
+        tile->setFocusPolicy(Qt::StrongFocus);
         tile->setFixedSize(72, 62);
         tile->setIconSize(QSize(32, 32));
         tile->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
         tile->setContextMenuPolicy(Qt::CustomContextMenu);
         tile->setProperty("slot", i);
+        tile->setProperty("empty", true);
         tile->installEventFilter(this);
         tiles_.append(tile);
         grid_->addWidget(tile, i / columns, i % columns);
@@ -289,9 +320,21 @@ void LauncherPanel::refresh() {
         else
             ++it;
     syncTabs();
+    QStringList visibleIcons;
+    for (int i = 0; i < visibleSlotCount(); ++i)
+        if (const auto id = itemAt(i); !id.isEmpty())
+            visibleIcons.append(id);
+    Q_EMIT iconPriorityChanged(visibleIcons);
     for (int i = 0; i < tiles_.size(); ++i) {
         auto* tile = tiles_[i];
         const auto id = itemAt(i);
+        const bool empty = id.isEmpty() || !catalog.items.contains(id);
+        if (tile->property("empty").toBool() != empty) {
+            tile->setProperty("empty", empty);
+            tile->style()->unpolish(tile);
+            tile->style()->polish(tile);
+            tile->update();
+        }
         tile->setIcon({});
         tile->setText({});
         tile->setToolTip(tx(u"空槽 · 右键添加"));
@@ -302,7 +345,7 @@ void LauncherPanel::refresh() {
             tile->setAccessibleName({});
             continue;
         }
-        if (id.isEmpty() || !catalog.items.contains(id))
+        if (empty)
             continue;
         const auto& item = catalog.items[id];
         tile->setText(tile->fontMetrics().elidedText(item.name, Qt::ElideRight, 68));
@@ -312,21 +355,49 @@ void LauncherPanel::refresh() {
         ensureIcon(item);
     }
     setWindowTitle(tx(u"MT · 启动面板 · 第 %1 页").arg(page_ + 1));
+    updateHoverTitle();
     if (searchPopup_->isVisible())
         updateSearch(true);
 }
 void LauncherPanel::applyTileStyle() {
-    // Same card language as clipboard records; data refreshes do not repolish tiles.
+    // Occupied slots keep the shared card surface; empty slots remain visible
+    // without competing with application icons. Unchanged refreshes do not repolish.
     const auto style = QStringLiteral("QToolButton { background:%1; border:1px solid transparent; "
                                       "border-radius:6px; padding:3px 1px; font-size:12px; } "
-                                      "QToolButton:hover { background:%2; } QToolButton:pressed { "
-                                      "background:%3; } QToolButton:focus { border-color:%4; }")
+                                      "QToolButton[empty=\"true\"] { background:transparent; "
+                                      "border:1px dashed %5; } "
+                                      "QToolButton:hover { background:%1; border:1px solid %2; } "
+                                      "QToolButton[empty=\"true\"]:hover { background:transparent; "
+                                      "border:1px dashed %2; } QToolButton:pressed, "
+                                      "QToolButton[empty=\"true\"]:pressed { background:%3; } "
+                                      "QToolButton:focus, QToolButton[empty=\"true\"]:focus "
+                                      "{ border:1px solid %4; } QToolButton:disabled, "
+                                      "QToolButton[empty=\"true\"]:disabled { background:transparent; "
+                                      "border-color:transparent; }")
                            .arg(theme_.color(QStringLiteral("surface-subtle")).name(),
-                                theme_.color(QStringLiteral("surface-hover")).name(),
+                                theme_.color(QStringLiteral("border-strong")).name(),
                                 theme_.color(QStringLiteral("surface-selected")).name(),
-                                theme_.color(QStringLiteral("focus")).name());
+                                theme_.color(QStringLiteral("focus")).name(),
+                                theme_.color(QStringLiteral("border")).name());
     for (auto* tile : tiles_)
         tile->setStyleSheet(style);
+}
+void LauncherPanel::clearTilePresses() {
+    for (auto* tile : tiles_)
+        tile->setDown(false);
+}
+void LauncherPanel::updateHoverTitle() {
+    QString name;
+    if (hoveredTile_ >= 0 && hoveredTile_ < visibleSlotCount()) {
+        const auto& items = service_.catalog().items;
+        const auto it = items.constFind(itemAt(hoveredTile_));
+        if (it != items.cend())
+            name = it->name;
+    }
+    hoverTitle_->setText(hoverTitle_->fontMetrics().elidedText(
+        name, Qt::ElideRight, hoverTitle_->contentsRect().width()));
+    hoverTitle_->setToolTip(name);
+    hoverTitle_->setAccessibleName(name);
 }
 void LauncherPanel::syncTabs() {
     // A saved snapshot may be older than the drag or an already queued order.
@@ -697,9 +768,14 @@ void LauncherPanel::updateSearch(bool preserveSelection) {
         auto* row =
             new QListWidgetItem(item.name + QStringLiteral("  ·  ") + category.name, results_);
         row->setData(Qt::UserRole, item.id);
-        row->setIcon(icons_.value(item.id).second);
+        row->setIcon(icons_.contains(item.id) ? icons_[item.id].second : theme_.icon(Symbol::Files));
+        row->setSizeHint(QSize(0, 32));
+        row->setToolTip(item.name + u'\n' + category.name + u'\n' + item.target);
     }
-    results_->setVisible(!search_->text().isEmpty());
+    const bool hasQuery = !search_->text().isEmpty();
+    results_->setFixedHeight(std::min(210, results_->count() * 36 + 4));
+    results_->setVisible(hasQuery && !matches.isEmpty());
+    searchEmpty_->setVisible(hasQuery && matches.isEmpty());
     if (results_->count())
         results_->setCurrentRow(0);
     for (int i = 0; i < results_->count(); ++i)
@@ -708,6 +784,24 @@ void LauncherPanel::updateSearch(bool preserveSelection) {
     results_->verticalScrollBar()->setValue(scroll);
     searchPopup_->adjustSize();
     positionSearch();
+    QTimer::singleShot(0, this, &LauncherPanel::requestSearchIcons);
+}
+void LauncherPanel::requestSearchIcons() {
+    if (!results_->isVisible() || !results_->count())
+        return;
+    const int first = qMax(0, results_->indexAt(QPoint(1, 1)).row());
+    int last = results_->indexAt(results_->viewport()->rect().bottomRight() - QPoint(1, 1)).row();
+    if (last < first)
+        last = qMin(results_->count() - 1, first + 7);
+    QStringList visible;
+    for (int row = first; row <= last; ++row)
+        visible.append(results_->item(row)->data(Qt::UserRole).toString());
+    Q_EMIT iconPriorityChanged(visible);
+    for (const auto& id : visible) {
+        const auto it = service_.catalog().items.constFind(id);
+        if (it != service_.catalog().items.cend())
+            ensureIcon(it.value());
+    }
 }
 void LauncherPanel::keyPressEvent(QKeyEvent* event) {
     const auto key = event->key();
@@ -768,7 +862,13 @@ void LauncherPanel::keyPressEvent(QKeyEvent* event) {
     event->accept();
 }
 bool LauncherPanel::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == hoverTitle_ && event->type() == QEvent::Resize)
+        updateHoverTitle();
     if (watched == tabs_) {
+        const bool blankPress = event->type() == QEvent::MouseButtonPress &&
+            tabs_->tabAt(static_cast<QMouseEvent*>(event)->position().toPoint()) < 0;
+        if (handleSurfaceDrag(tabs_, event, blankPress))
+            return true;
         if (event->type() == QEvent::MouseButtonPress &&
             static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
             ++tabInteractionGeneration_;
@@ -805,9 +905,10 @@ bool LauncherPanel::eventFilter(QObject* watched, QEvent* event) {
                 return true;
             }
             if (watched == search_ && (key->key() == Qt::Key_Up || key->key() == Qt::Key_Down)) {
-                results_->setCurrentRow(
-                    qBound(0, results_->currentRow() + (key->key() == Qt::Key_Down ? 1 : -1),
-                           results_->count() - 1));
+                if (results_->count())
+                    results_->setCurrentRow(
+                        qBound(0, results_->currentRow() + (key->key() == Qt::Key_Down ? 1 : -1),
+                               results_->count() - 1));
                 return true;
             }
         }
@@ -815,6 +916,23 @@ bool LauncherPanel::eventFilter(QObject* watched, QEvent* event) {
     }
     const int index = tiles_.indexOf(qobject_cast<QToolButton*>(watched));
     if (index >= 0) {
+        if (event->type() == QEvent::Enter) {
+            hoveredTile_ = index;
+            updateHoverTitle();
+        } else if (event->type() == QEvent::Leave && hoveredTile_ == index) {
+            hoveredTile_ = -1;
+            updateHoverTitle();
+        }
+        if (event->type() == QEvent::UngrabMouse)
+            tiles_[index]->setDown(false);
+        const bool empty = itemAt(index).isEmpty();
+        if (empty && event->type() == QEvent::MouseButtonPress &&
+            static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
+            selected_ = index;
+            tiles_[index]->setFocus(Qt::MouseFocusReason);
+        }
+        if (handleSurfaceDrag(tiles_[index], event, empty))
+            return true;
         if (event->type() == QEvent::MouseButtonPress) {
             selected_ = index;
             dragStart_ = static_cast<QMouseEvent*>(event)->position().toPoint();
@@ -825,12 +943,18 @@ bool LauncherPanel::eventFilter(QObject* watched, QEvent* event) {
                 (mouse->position().toPoint() - dragStart_).manhattanLength() >
                     QApplication::startDragDistance() &&
                 !itemAt(index).isEmpty()) {
-                QDrag drag(tiles_[index]);
+                const QPointer<QToolButton> source(tiles_[index]);
+                // Native drag-and-drop owns the release; it will not reliably
+                // reach the button that handled the original press.
+                clearTilePresses();
+                auto* drag = new QDrag(source.data());
                 auto* mime = new QMimeData;
                 mime->setData(mimeType, itemAt(index).toUtf8());
-                drag.setMimeData(mime);
-                drag.setPixmap(tiles_[index]->icon().pixmap(32, 32));
-                drag.exec(Qt::MoveAction);
+                drag->setMimeData(mime);
+                drag->setPixmap(source->icon().pixmap(32, 32));
+                drag->exec(Qt::MoveAction);
+                if (source)
+                    source->setDown(false);
                 return true;
             }
         }
@@ -859,6 +983,7 @@ void LauncherPanel::dragMoveEvent(QDragMoveEvent* e) {
     e->acceptProposedAction();
 }
 void LauncherPanel::dropEvent(QDropEvent* e) {
+    clearTilePresses();
     int slot = -1;
     const auto p = e->position().toPoint();
     if (!gridScroll_->viewport()->rect().contains(gridScroll_->viewport()->mapFrom(this, p))) {
@@ -876,10 +1001,15 @@ void LauncherPanel::dropEvent(QDropEvent* e) {
     }
     const auto onto = service_.catalog().items.value(itemAt(slot));
     const auto urls = e->mimeData()->urls();
-    if (e->mimeData()->hasFormat(mimeType))
-        service_.move(QString::fromUtf8(e->mimeData()->data(mimeType)), categoryId(),
-                      absoluteSlot(slot));
-    else if (!onto.id.isEmpty() && LauncherCatalog::acceptsFileArguments(onto) && !urls.isEmpty() &&
+    if (e->mimeData()->hasFormat(mimeType)) {
+        if (!service_.move(QString::fromUtf8(e->mimeData()->data(mimeType)), categoryId(),
+                           absoluteSlot(slot))) {
+            e->ignore();
+            return;
+        }
+        selected_ = slot;
+        focusSelected();
+    } else if (!onto.id.isEmpty() && LauncherCatalog::acceptsFileArguments(onto) && !urls.isEmpty() &&
              std::ranges::all_of(urls, [](const QUrl& url) { return url.isLocalFile(); })) {
         // Files dropped on a program open with it once, after its own arguments.
         auto once = onto;
@@ -906,6 +1036,9 @@ void LauncherPanel::moveEvent(QMoveEvent* e) {
         positionSearch();
 }
 void LauncherPanel::hideEvent(QHideEvent* e) {
+    hoveredTile_ = -1;
+    updateHoverTitle();
+    clearTilePresses();
     finishTabInteraction();
     if (searchPopup_)
         searchPopup_->hide();
@@ -946,6 +1079,8 @@ void LauncherPanel::retranslate() {
     label(tabLeft_, tx(u"向左滚动分类"));
     label(tabRight_, tx(u"向右滚动分类"));
     search_->setPlaceholderText(tx(u"搜索所有分类"));
+    search_->setAccessibleName(tx(u"搜索启动项"));
+    searchEmpty_->setText(tx(u"没有匹配的启动项\n换个关键词试试"));
     searchPopup_->setWindowTitle(tx(u"MT · 搜索启动项"));
     results_->setAccessibleName(tx(u"跨分类搜索结果"));
     refresh();
@@ -964,5 +1099,20 @@ void LauncherPanel::showNear(QPoint anchor, bool activate) {
     Panel::showNear(anchor, activate);
     if (activate)
         focusSelected();
+}
+void LauncherPanel::showCentered(QPoint center, bool activate) {
+    auto* target = QGuiApplication::screenAt(center);
+    if (!target)
+        target = QGuiApplication::primaryScreen();
+    if (target)
+        fitToWorkArea(target->availableGeometry());
+    auto anchor = center - QPoint(width() / 2, height() / 2);
+    if (target) {
+        // Clamp on the cursor's screen before showNear resolves the top-left.
+        const auto area = target->availableGeometry();
+        anchor.setX(qBound(area.left(), anchor.x(), qMax(area.left(), area.right() - width() + 1)));
+        anchor.setY(qBound(area.top(), anchor.y(), qMax(area.top(), area.bottom() - height() + 1)));
+    }
+    showNear(anchor, activate);
 }
 } // namespace mt

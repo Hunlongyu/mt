@@ -1,5 +1,6 @@
 #pragma once
 #include <QSet>
+#include <QPointer>
 #include <memory>
 #include <QWidget>
 class QVBoxLayout;
@@ -35,6 +36,10 @@ class Panel : public QWidget {
     void opacityChanged(qreal value);
 
   protected:
+    // A press owns the gesture until release/cancellation. Dynamic surfaces such
+    // as launcher slots can allow window movement only when currently empty.
+    bool handleSurfaceDrag(QWidget* surface, QEvent*, bool allowStart = true);
+    bool event(QEvent*) override;
     void paintEvent(QPaintEvent*) override;
     void showEvent(QShowEvent*) override;
     void moveEvent(QMoveEvent*) override;
@@ -52,7 +57,7 @@ class Panel : public QWidget {
     qreal opacity_ = 1.0;
     bool animated_ = false;
     QPoint dragOffset_;
-    bool dragging_ = false;
+    QPointer<QWidget> dragSource_;
     QSet<QObject*> dragWidgets_;
 };
 } // namespace mt

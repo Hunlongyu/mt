@@ -12,36 +12,40 @@ PopupMenuStyle::PopupMenuStyle(Theme& theme)
     qApp->installEventFilter(this);
     connect(&theme_, &Theme::changed, this, [this] {
         for (auto* widget : QApplication::topLevelWidgets())
-            if (auto* menu = qobject_cast<QMenu*>(widget); menu && menu->isVisible())
-                applyFrame(*menu);
+            if (widget->isVisible() && (qobject_cast<QMenu*>(widget) ||
+                                       widget->property("settingsComboPopup").toBool()))
+                applyFrame(*widget);
     });
 }
 PopupMenuStyle::~PopupMenuStyle() = default;
-void PopupMenuStyle::applyFrame(QMenu& menu) {
+void PopupMenuStyle::applyFrame(QWidget& popup) {
     // Do not create a fresh HWND after a popup has already been dismissed.
-    if (menu.isVisible() && menu.internalWinId() && menu.windowHandle())
-        menu.setProperty("systemMenuFrame", frame_->apply(*menu.windowHandle(),
+    if (popup.isVisible() && popup.internalWinId() && popup.windowHandle())
+        popup.setProperty("systemMenuFrame", frame_->apply(*popup.windowHandle(),
                                                           theme_.name() == QStringLiteral("dark")));
 }
 bool PopupMenuStyle::eventFilter(QObject* watched, QEvent* event) {
     auto* menu = qobject_cast<QMenu*>(watched);
-    if (!menu)
+    auto* popup = qobject_cast<QWidget*>(watched);
+    if (!popup || (!menu && !popup->property("settingsComboPopup").toBool()))
         return false;
     if (event->type() == QEvent::Polish) {
-        menu->setWindowFlag(Qt::FramelessWindowHint);
-        menu->setWindowFlag(Qt::NoDropShadowWindowHint, false);
-        menu->setAttribute(Qt::WA_TranslucentBackground, false);
-        connect(menu, &QMenu::aboutToShow, this, [menu] {
-            // Keep the reference's compact text layout without changing QAction
-            // icons used by other views, shortcuts, or callbacks.
-            for (auto* action : menu->actions())
-                action->setIconVisibleInMenu(false);
-        });
+        popup->setWindowFlag(Qt::FramelessWindowHint);
+        popup->setWindowFlag(Qt::NoDropShadowWindowHint, false);
+        popup->setAttribute(Qt::WA_TranslucentBackground, false);
+        if (menu) {
+            connect(menu, &QMenu::aboutToShow, this, [menu] {
+                // Keep the reference's compact text layout without changing QAction
+                // icons used by other views, shortcuts, or callbacks.
+                for (auto* action : menu->actions())
+                    action->setIconVisibleInMenu(false);
+            });
+        }
     } else if (event->type() == QEvent::Show) {
-        applyFrame(*menu);
-        QTimer::singleShot(0, this, [this, menu = QPointer<QMenu>(menu)] {
-            if (menu)
-                applyFrame(*menu);
+        applyFrame(*popup);
+        QTimer::singleShot(0, this, [this, popup = QPointer<QWidget>(popup)] {
+            if (popup)
+                applyFrame(*popup);
         });
     }
     return false;

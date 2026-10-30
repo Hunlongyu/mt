@@ -10,12 +10,12 @@ class SettingsDialog final : public QDialog {
   public:
     using Completion = std::function<void(std::expected<void, QString>)>;
     using Apply = std::function<void(const Settings&, Completion)>;
-    SettingsDialog(Theme& theme, const Settings& settings, const QString& dataRoot, Apply apply,
+    SettingsDialog(Theme& theme, const Settings& settings, Apply apply,
                    QWidget* parent = nullptr);
     ~SettingsDialog() override;
     void reject() override;
     bool hasUnsavedChanges() const;
-    void showUpdatePage();
+    void showAboutPage();
     void setSystemIntegrationStatus(bool preview, const QString& message);
     void setUpdateStatus(const QString& message, bool canCheck, bool canUpdate,
                          bool ready, bool canCancel);

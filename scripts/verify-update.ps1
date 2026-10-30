@@ -23,12 +23,12 @@ function Start-Fixture([string]$Executable, [string[]]$Arguments) {
     return [Diagnostics.Process]::Start($info)
 }
 
-foreach ($scenario in @('success', 'invalid-hash', 'locked-executable', 'cancelled')) {
+foreach ($scenario in @('success', 'filename-with-spaces', 'invalid-hash', 'locked-executable', 'cancelled')) {
     $root = Join-Path $runRoot $scenario
     $dataRoot = Join-Path $root 'data'
     $stage = Join-Path $root ('.mt-update-' + [guid]::NewGuid().ToString())
     New-Item -ItemType Directory -Path $dataRoot,$stage -Force | Out-Null
-    $target = Join-Path $root 'mt.exe'
+    $target = Join-Path $root $(if ($scenario -eq 'filename-with-spaces') { '我的 MT.exe' } else { 'mt.exe' })
     $candidate = Join-Path $stage 'candidate.exe'
     $updater = Join-Path $stage 'updater.exe'
     Copy-Item -LiteralPath $sourceExecutable -Destination $target
@@ -67,7 +67,8 @@ foreach ($scenario in @('success', 'invalid-hash', 'locked-executable', 'cancell
         if (!$parent.WaitForExit(8000) -or $parent.ExitCode -ne 0) { throw "原预览程序未正常退出：$scenario" }
         if ($lockedFile) { $lockedFile.Dispose(); $lockedFile = $null }
         $actualHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
-        if ($scenario -eq 'success') {
+        $startup = $null
+        if ($scenario -in @('success', 'filename-with-spaces')) {
             $watch = [Diagnostics.Stopwatch]::StartNew()
             while (!(Test-Path -LiteralPath (Join-Path $stage 'startup.ok')) -and $watch.ElapsedMilliseconds -lt 7000) {
                 Start-Sleep -Milliseconds 100
@@ -77,15 +78,26 @@ foreach ($scenario in @('success', 'invalid-hash', 'locked-executable', 'cancell
                 (Get-FileHash -LiteralPath (Join-Path $stage 'previous.exe') -Algorithm SHA256).Hash -ne $oldHash) {
                 throw '替换、备份或新程序启动验证失败。'
             }
+            $startup = Get-Content -LiteralPath (Join-Path $stage 'startup.ok') -Raw | ConvertFrom-Json
+            if (!$startup.usesShowWindow -or $startup.showWindow -ne 1 -or $startup.nativeVisibleWindows -lt 1 -or
+                [IO.Path]::GetFullPath($startup.executable) -ne [IO.Path]::GetFullPath($target)) {
+                throw '新进程窗口不可见、启动方式错误或没有保留原 EXE 路径。'
+            }
+            $watch.Restart()
+            while ((Test-Path -LiteralPath $updater) -and $watch.ElapsedMilliseconds -lt 5000) {
+                Start-Sleep -Milliseconds 100
+            }
+            if (Test-Path -LiteralPath $updater) { throw '成功更新后临时助手未被清理。' }
         } else {
             if ($helperExit -eq 0 -or $actualHash -ne $oldHash -or
                 !(Test-Path -LiteralPath (Join-Path $stage 'error.txt'))) { throw "失败保护未生效：$scenario" }
             if ($scenario -eq 'invalid-hash' -and (Test-Path -LiteralPath (Join-Path $stage 'ready'))) {
                 throw '损坏文件不应进入安装握手。'
             }
+            if (!(Test-Path -LiteralPath $updater)) { throw '失败暂存目录不应自动清理。' }
         }
         if ((Get-FileHash -LiteralPath $sentinel -Algorithm SHA256).Hash -ne $sentinelHash) { throw '数据文件被修改。' }
-        $records.Add([ordered]@{ scenario = $scenario; passed = $true; helperExit = $helperExit; directory = $root })
+        $records.Add([ordered]@{ scenario = $scenario; passed = $true; helperExit = $helperExit; directory = $root; startup = $startup })
         Write-Output "更新集成检查通过：$scenario"
     } finally {
         if ($lockedFile) { $lockedFile.Dispose() }

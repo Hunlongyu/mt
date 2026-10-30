@@ -3,30 +3,30 @@
 [![Windows 构建](https://github.com/Hunlongyu/mt/actions/workflows/windows.yml/badge.svg)](https://github.com/Hunlongyu/mt/actions/workflows/windows.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**MT（my tool）** 将启动面板、剪贴板历史、鼠标手势和黑屏遮挡整合到一个 Windows 托盘入口。使用 C++23、Qt 6 Widgets 和 CMake，目标是静态 Qt、静态 CRT、单个 `mt.exe`。
+**MT（my tool）** 将启动面板、剪贴板历史、鼠标手势和锁屏整合到一个 Windows 托盘入口。使用 C++23、Qt 6 Widgets 和 CMake，目标是静态 Qt、静态 CRT、单个 `mt.exe`。
 
-首个公开版本为 **v0.1.0**，功能仍在持续完善。更新内容见 [版本说明](docs/releases/v0.1.0.md)，功能缺项与验证边界见 [开发状态](docs/development.md)。
+当前版本为 **v0.1.1**，功能仍在持续完善。更新内容见 [版本说明](docs/releases/v0.1.1.md)，功能缺项与验证边界见 [开发状态](docs/development.md)。
 
-品牌名固定为 **MT**，程序名为 `mt.exe`。正式 Logo 为 [`resources/logo.ico`](resources/logo.ico)，用于 EXE、应用窗口和托盘；功能按钮继续使用 Lucide 图标。
+品牌名固定为 **MT**，程序名为 `mt.exe`。正式 Logo 为 [`resources/logo.ico`](resources/logo.ico)，用于 EXE、应用窗口和托盘；只保留黑色圆角图形和内部 MT 字样，外围透明，不带白色底板。透明源图为 [`resources/logo.png`](resources/logo.png)；功能按钮继续使用 Lucide 图标。
 
 ## 功能
 
 | 功能 | 当前能力 |
 | --- | --- |
-| 启动面板 | 分类、固定槽位、搜索、拖放、快捷键、边缘唤起和使用排序；默认 4 列 × 7 行，可在设置中调整 |
+| 启动面板 | 分类、固定槽位、搜索、拖放、快捷键、边缘唤起和使用排序；普通唤起时面板中心对准鼠标，靠近屏幕边缘时自动避让；默认 4 列 × 7 行，可在设置中调整 |
 | 剪贴板 | 文本、HTML、RTF、图片、文件列表及可序列化应用格式；搜索、过滤、收藏、置顶、预览、回贴和纯文本粘贴 |
 | 鼠标手势 | 轨迹识别、按键与窗口操作、程序规则、轨迹与动作名称显示 |
-| 黑屏遮挡 | 覆盖全部显示器、简单或密码解锁、暂停；不代替 Windows 账户锁定 |
+| 锁屏 | 覆盖全部显示器、简单或密码解锁、暂停；不代替 Windows 账户锁定 |
 | 统一设置 | 纯中文、浅色/深色/跟随系统、面板不透明度、独立功能开关 |
 | 开机启动与管理员支持 | 当前用户登录自启；按需启用 UAC 辅助进程，处理管理员窗口回贴与手势 |
 | 数据导入 | 只读导入 Hopy 历史和 HLaunch 分类/启动项；不迁移 hua、BlackLock 配置 |
 | 软件更新 | 后台检查 GitHub 正式版本，下载并校验，确认后替换程序并重启 |
 
-当前开发验证目标为 **Windows 11 x64**。跨机器部署、真实管理员窗口和完整多屏矩阵仍待验证。鼠标手势、黑屏遮挡、开机启动和管理员支持默认关闭。
+当前开发验证目标为 **Windows 11 x64**。跨机器部署、真实管理员窗口和完整多屏矩阵仍待验证。鼠标手势、锁屏、开机启动和管理员支持默认关闭。
 
 ## 使用
 
-从 [Releases](https://github.com/Hunlongyu/mt/releases/latest) 下载 `mt-0.1.0-windows-x64.zip`，解压后运行 `mt.exe`。也可下载单文件 `mt-windows-x64.exe`；便携包包含第三方许可证。开发构建可从通过的 [Actions 运行](https://github.com/Hunlongyu/mt/actions) 下载 `mt-windows-x64` 产物。
+从 [Releases](https://github.com/Hunlongyu/mt/releases/latest) 下载便携 ZIP，解压后运行 `mt.exe`；便携包包含第三方许可证。Actions 和后续 Release 的单文件程序统一为 `mt.exe`。已发布的 v0.1.0 单文件仍叫 `mt-windows-x64.exe`，切换到新命名版本需手动下载一次。开发构建可从通过的 [Actions 运行](https://github.com/Hunlongyu/mt/actions) 下载 `mt-windows-x64` 产物，其中的程序为 `mt.exe`。
 
 运行 `mt.exe`，通过系统托盘打开功能和设置。默认快捷键：
 
@@ -34,9 +34,9 @@
 | --- | --- |
 | `Alt+Space` | 启动面板 |
 | `Alt+C` | 剪贴板 |
-| `Alt+L` | 黑屏遮挡，需先启用 |
+| `Alt+L` | 锁屏，需先启用 |
 
-配置和历史数据独立于 EXE。当前开发身份的默认目录是 `%LOCALAPPDATA%\HunlongyuDevelopment\mt`；设置 → 常规显示实际目录。可指定独立目录：
+配置和历史数据独立于 EXE，默认目录为 `%LOCALAPPDATA%\dev.hly.com\mt`。如果新目录尚不存在而旧版 `%LOCALAPPDATA%\HunlongyuDevelopment\mt` 已有数据，则继续使用旧目录，不自动覆盖或迁移；设置页不展示数据位置。可指定独立目录：
 
 ```powershell
 ./mt.exe --data-dir D:/MT-data
@@ -78,7 +78,7 @@
 ./scripts/verify-update.ps1
 ```
 
-`--preview` 使用示例数据，不安装输入钩子、不监听剪贴板、不启动外部程序、不联网检查更新。`verify-update.ps1` 只在临时目录中替换程序副本，并以预览模式重启，验证成功、损坏文件、占用失败和取消安装。原生输入与黑屏测试需单独显式执行，普通 CTest 不会锁住桌面。
+`--preview` 使用示例数据，不安装输入钩子、不监听剪贴板、不启动外部程序、不联网检查更新。`verify-update.ps1` 只在临时目录中替换程序副本，并以预览模式重启，验证成功、损坏文件、占用失败和取消安装。原生输入与锁屏测试需单独显式执行，普通 CTest 不会锁住桌面。
 
 ## 项目结构
 

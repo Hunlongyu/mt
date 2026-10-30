@@ -45,7 +45,7 @@ ScreenLockService::ScreenLockService(QObject* parent) : QObject(parent) {
     connect(&pulse_, &QTimer::timeout, this, [this] {
         if (active_ && !locked_ && !stopping_ && starting_.elapsed() > 2500) {
             stop();
-            Q_EMIT failed(tx(u"黑屏启动失败，输入或电源保护未就绪"));
+            Q_EMIT failed(tx(u"锁屏启动失败，输入或电源保护未就绪"));
             if (session_ && !session_->isRunning())
                 finish();
             return;
@@ -88,7 +88,7 @@ std::expected<void, QString> ScreenLockService::start(bool required, const QStri
     if (!configured)
         return configured;
     if (QGuiApplication::screens().isEmpty())
-        return std::unexpected(tx(u"没有可用于黑屏遮挡的显示器"));
+        return std::unexpected(tx(u"没有可用于锁屏的显示器"));
     active_ = true;
     stopping_ = false;
     const auto generation = ++generation_;
@@ -131,7 +131,7 @@ void ScreenLockService::rebuildCovers() {
         return;
     if (QGuiApplication::screens().isEmpty()) {
         stop();
-        Q_EMIT failed(tx(u"显示器已断开，已解除黑屏遮挡"));
+        Q_EMIT failed(tx(u"显示器已断开，已解锁"));
         return;
     }
     std::vector<std::unique_ptr<BlackoutWindow>> next;

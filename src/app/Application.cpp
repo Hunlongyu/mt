@@ -332,7 +332,7 @@ void Application::applySettings(const Settings& next, SettingsCompletion done) {
         return;
     }
     if (screenLock_->active()) {
-        done(std::unexpected(tx(u"请先解除黑屏遮挡再修改设置")));
+        done(std::unexpected(tx(u"请先解锁再修改设置")));
         return;
     }
     if (!preview_ && next.adminSupport && !settings_.adminSupport && !admin_->ready()) {
@@ -351,7 +351,7 @@ void Application::applySettings(const Settings& next, SettingsCompletion done) {
     if (auto valid = next.validate(); !valid)
         return valid;
     if (screenLock_->active())
-        return std::unexpected(tx(u"请先解除黑屏遮挡再修改设置"));
+        return std::unexpected(tx(u"请先解锁再修改设置"));
     if (next.requirePassword) {
         auto plain = revealLockPassword(next.protectedPassword);
         if (!plain)
@@ -468,10 +468,13 @@ void Application::error(const QString& message) {
 LauncherPanel& Application::launcherPanel() {
     if (!launcherPanel_) {
         launcherPanel_ = std::make_unique<LauncherPanel>(theme_, *launcher_);
+        gestures_->setLauncherWindow(launcherPanel_.get());
         launcherPanel_->setAnimated(DesktopServices::clientAnimationsEnabled());
         launcherPanel_->setPanelOpacity(settings_.launcherOpacity);
         launcherPanel_->setPinned(settings_.launcherPinned);
         launcherPanel_->setGrid(launcher_->catalog().columns, settings_.launcherRows);
+        connect(launcherPanel_.get(), &LauncherPanel::iconPriorityChanged,
+                &shellJobs_, &ShellJobs::prioritizeIcons);
         connect(launcherPanel_.get(), &LauncherPanel::iconRequested, this,
                 [this](const QString& id, const QString& source) {
                     shellJobs_.icon(id, source, store_.root(), [this, id, source](QImage image) {
@@ -601,7 +604,10 @@ void Application::showLauncher() {
         lastTarget_ = target;
     if (!preview_ && clipboardPanel_)
         clipboardPanel_->hide();
-    panel.showNear(preview_ ? QPoint(160, 180) : QCursor::pos());
+    if (preview_)
+        panel.showNear(QPoint(160, 180));
+    else
+        panel.showCentered(QCursor::pos());
 }
 void Application::showClipboard() {
     if (gestures_) gestures_->blockNow();
@@ -694,7 +700,10 @@ void Application::showSettings() {
     if (screenLock_ && screenLock_->active())
         return;
     if (settingsDialog_) {
-        settingsDialog_->show();
+        if (settingsDialog_->isMinimized())
+            settingsDialog_->showNormal();
+        else
+            settingsDialog_->show();
         settingsDialog_->raise();
         settingsDialog_->activateWindow();
         return;
@@ -702,7 +711,7 @@ void Application::showSettings() {
     if (clipboardPanel_)
         clipboardPanel_->hide();
     settingsDialog_ =
-        new SettingsDialog(theme_, settings_, store_.root(),
+        new SettingsDialog(theme_, settings_,
                            [this](const Settings& next, SettingsCompletion done) { applySettings(next, std::move(done)); });
     settingsDialog_->setAttribute(Qt::WA_DeleteOnClose);
     settingsDialog_->setSystemIntegrationStatus(preview_, admin_->status());
@@ -962,22 +971,7 @@ void Application::buildTrayMenu() {
     menu_ = std::make_unique<QMenu>();
     menu_->addAction(tx(u"启动面板"), this, &Application::showLauncher);
     menu_->addAction(tx(u"剪贴板"), this, &Application::showClipboard);
-    auto* lock = menu_->addAction(tx(u"立即黑屏"), this, &Application::lockScreen);
-    auto* pauseLock = menu_->addAction(tx(u"暂停黑屏遮挡"));
-    pauseLock->setCheckable(true);
-    connect(pauseLock, &QAction::triggered, this, [this](bool checked) {
-        auto next = settings_;
-        next.lockPaused = checked;
-        applySettings(next);
-    });
-    connect(menu_.get(), &QMenu::aboutToShow, this, [this, lock, pauseLock] {
-        lock->setText(settings_.requirePassword ? tx(u"立即黑屏（密码 + 回车解锁）")
-                                               : tx(u"立即黑屏（回车解锁）"));
-        lock->setEnabled(!preview_ && settings_.lockEnabled && !settings_.lockPaused &&
-                         !screenLock_->active());
-        pauseLock->setEnabled(settings_.lockEnabled && !screenLock_->active());
-        pauseLock->setChecked(settings_.lockPaused);
-    });
+    auto* lock = menu_->addAction(tx(u"立即锁屏"), this, &Application::lockScreen);
     menu_->addSeparator();
     auto* pause = menu_->addAction(tx(u"暂停剪贴板记录"));
     pause->setCheckable(true);
@@ -992,21 +986,31 @@ void Application::buildTrayMenu() {
             }
         });
     });
-    menu_->addAction(tx(u"设置"), this, &Application::showSettings);
-    menu_->addAction(tx(u"切换黑白主题"), this, [this] {
+    auto* pauseLock = menu_->addAction(tx(u"暂停锁屏"));
+    pauseLock->setCheckable(true);
+    connect(pauseLock, &QAction::triggered, this, [this](bool checked) {
         auto next = settings_;
-        next.theme = effectiveTheme() == QStringLiteral("dark") ? QStringLiteral("light")
-                                                                : QStringLiteral("dark");
+        next.lockPaused = checked;
         applySettings(next);
     });
-    menu_->addSeparator();
-    menu_->addAction(tx(u"关于"), this, [this] {
-        QMessageBox::information(
-            nullptr, QStringLiteral("MT"),
-            tx(u"MT %1 · 原生开发预览\nC++23 · Qt "
-                           "Widgets\n启动器、剪贴板、鼠标手势和黑屏遮挡已接入。\n数据目录：%2")
-                .arg(QString::fromLatin1(TOOLS_VERSION), store_.root()));
+    connect(menu_.get(), &QMenu::aboutToShow, this, [this, lock, pauseLock] {
+        lock->setText(settings_.requirePassword ? tx(u"立即锁屏（密码 + 回车解锁）")
+                                               : tx(u"立即锁屏（回车解锁）"));
+        lock->setEnabled(!preview_ && settings_.lockEnabled && !settings_.lockPaused &&
+                         !screenLock_->active());
+        pauseLock->setEnabled(settings_.lockEnabled && !screenLock_->active());
+        pauseLock->setChecked(settings_.lockPaused);
     });
+    menu_->addSeparator();
+    menu_->addAction(tx(u"设置"), this, &Application::showSettings);
+    menu_->addAction(tx(u"关于"), this, [this] {
+        if (screenLock_ && screenLock_->active())
+            return;
+        showSettings();
+        if (settingsDialog_)
+            settingsDialog_->showAboutPage();
+    });
+    menu_->addSeparator();
     menu_->addAction(tx(u"退出"), qApp, &QCoreApplication::quit);
 }
 QString Application::effectiveTheme() const {
@@ -1312,10 +1316,10 @@ void Application::saveEvidenceRenders(const QString& folder) {
         menu_->adjustSize();
         capture(*menu_, QStringLiteral("menu"));
         {
-            SettingsDialog dialog(theme_, settings_, store_.root(),
+            SettingsDialog dialog(theme_, settings_,
                                   [](const Settings&, SettingsDialog::Completion done) { done({}); });
             if (auto* pages = dialog.findChild<QStackedWidget*>(QStringLiteral("settingsPages")))
-                pages->setCurrentIndex(3); // clipboard page
+                pages->setCurrentIndex(2); // clipboard page
             dialog.resize(1000, 760);
             dialog.ensurePolished();
             QPixmap page(dialog.size() * dialog.devicePixelRatioF());
