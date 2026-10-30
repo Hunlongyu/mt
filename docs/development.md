@@ -56,8 +56,67 @@ CI 使用 Windows Server 2022，它没有 Windows 11 的 DWM 圆角接口：专�
 
 导入范围仅为 Hopy 历史（及图片、HTML 附属内容）和 HLaunch 分类/启动项（含必要快捷方式）；不迁移旧工具偏好、自启、hua 规则或 BlackLock 密码。现有 MT 历史数据库从 schema 1 升至 2 前创建一致性备份；未知版本或无版本标记的非空库拒绝写入。
 
-当前采用 C++23、CMake、静态 Qt、静态 CRT，不引入 QML、WinUI、WebView 或动态业务插件。第三方原生 C 库可保留。构建步骤见 README；更新和发布分别见 `updating.md`、`releasing.md`。
+当前采用 C++23、CMake、静态 Qt、静态 CRT，不引入 QML、WinUI、WebView 或动态业务插件。第三方原生 C 库可保留。构建步骤见下文[本地构建](#本地构建)；更新和发布分别见[更新设计](updating.md)、[发布流程](releasing.md)。
 
 自更新继续单 EXE 分发，使用主程序的临时副本执行替换；父进程身份校验和正常退出后再启动新版本。新程序及回退使用正常窗口方式，已完成更新的助手在启动后清理，原路径、数据目录、旧 EXE 备份和失败记录保留。隔离验证覆盖中文空格文件名及原生窗口可见性，真实线上跨版本升级仍待验收。
 
 Actions 与后续 Release 的程序文件统一为 `mt.exe`，更新元数据同步匹配此文件名；已发布 v0.1.0 的旧命名版本需手动下载一次新版本。压缩包与 Actions 产物集合仍可标注版本、平台和架构。
+
+## 本地构建
+
+以下命令均在仓库根目录执行。开发构建也可从通过的 [Actions 运行](https://github.com/Hunlongyu/mt/actions)下载 `mt-windows-x64` 产物，其中的程序为 `mt.exe`。
+
+需要 Visual Studio 2022 或更新版本的 C++ 工具链、Windows SDK、CMake 3.29+、Ninja、PowerShell 7 和静态 Qt SDK。CI 固定使用 **Qt 6.11.2**；MSVC 通过 `vswhere -prerelease` 自动发现。
+
+下载与 CI 相同的静态 SDK（[yuanpeirong/buildQt · Qt6.11.2_rev0](https://github.com/yuanpeirong/buildQt/releases/tag/Qt6.11.2_rev0)）：
+
+```powershell
+./scripts/get-qt.ps1
+./scripts/build.ps1 -QtRoot C:/mt-deps/sdk/6.11.2-static/msvc2022_64_RP
+```
+
+脚本固定下载 `Qt_6.11.2-static-Release_msvc2022_64_RP.7z`，核验 SHA-256，并获取相同版本的官方源码归档用于发布材料。RP 精简包包含 Qt Base、Tools、Translations、SVG，满足当前组件需要；不自动追踪上游 latest。
+
+已有静态 SDK 时，直接把其目录传给 `-QtRoot`。也可从校验过的官方源码自行构建：
+
+```powershell
+./scripts/build-qt.ps1 -InstallRoot C:/mt-deps/qt
+./scripts/build.ps1 -QtRoot C:/mt-deps/qt
+```
+
+产物位于 `out/build/win-static-release/mt.exe`。默认执行 CTest；`-SkipTests` 仅跳过测试运行，`-Fresh` 重新探测编译器。
+
+独立示例预览：
+
+```powershell
+./scripts/preview.ps1
+./scripts/preview.ps1 -Settings
+./scripts/verify-preview.ps1
+./scripts/verify-update.ps1
+```
+
+`--preview` 使用示例数据，不安装输入钩子、不监听剪贴板、不启动外部程序、不联网检查更新。`verify-update.ps1` 只在临时目录中替换程序副本，并以预览模式重启，验证成功、损坏文件、占用失败和取消安装。原生输入与锁屏测试需单独显式执行，普通 CTest 不会锁住桌面。
+
+### README 预览图
+
+公开预览图位于 [docs/images](images/)，来自当前版本原生程序的示例数据渲染。使用 `--preview --data-dir <新的隔离目录> --evidence <输出目录> --quit-after 6000` 导出深浅两套主题，选取启动面板、剪贴板与设置页面；设置图将导出的 `settings-clipboard-<主题>.png` 保存为 `settings-<主题>.png`。
+
+导出图片仅包含控件内容，不包含 DWM 管理的系统圆角、边框和阴影。更新图片前检查示例内容、图片清晰度及 README 相对路径，不将真实历史数据或本机诊断截图作为公开素材。
+
+## 项目结构
+
+```text
+src/app/                    应用装配与生命周期
+src/modules/                四项内置功能
+src/infrastructure/         设置、存储、更新与中文文本
+src/platform/windows/       Windows 输入、窗口、Shell 与更新助手
+src/ui/                     共享主题、控件和设置窗口
+resources/                  统一主题、图标、翻译和许可证
+tests/                      单测与显式开启的桌面集成测试
+scripts/                    SDK、应用构建、验证和发布打包
+.github/workflows/          Windows CI 与标签发布
+prototypes/                 可重建的 HTML 界面原型
+docs/                       更新、发布、开发契约和验证记录
+```
+
+原型通过 `node prototypes/desktop/build.mjs` 和 `node prototypes/settings/build.mjs` 生成。原生与原型共用 `resources/theme/theme.json` 和 `resources/icons/lucide/`。

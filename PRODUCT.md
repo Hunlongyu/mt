@@ -69,8 +69,8 @@ Impeccable 当前的预设平台枚举未覆盖 Windows，因此按实际平台�
 
 ## Evidence on Hand
 
-- [README](README.md)：功能入口、默认操作、构建方式和项目结构。
-- [开发状态](docs/development.md)：当前实现、缺项和验证边界。
+- [README](README.md)：下载入口、功能介绍、界面预览与快速使用。
+- [开发状态](docs/development.md)：当前实现、缺项、验证边界、构建方式和项目结构。
 - [系统集成与数据](docs/system-integration.md)：自启、管理员支持、导入和数据库恢复。
 - [Qt 构建定义](CMakeLists.txt)、[原生源码](src/)与[测试目录](tests/)：实现与工程验证入口。
 - [主面板原型源文件](prototypes/desktop/template.html)和[设置原型源文件](prototypes/settings/template.html)：可重建的示例交互原型；不作为真实桌面功能验证。

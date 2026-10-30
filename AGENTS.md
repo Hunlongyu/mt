@@ -51,7 +51,7 @@
 
 ## 构建与验证
 
-- 按 README 使用 `scripts/get-qt.ps1` 获取固定且校验的 Qt 6.11.2 SDK，或以 `scripts/build-qt.ps1` 从官方源码重建。不要隐式追踪 latest 或每次 configure 重建 Qt。
+- 按[本地构建](docs/development.md#本地构建)使用 `scripts/get-qt.ps1` 获取固定且校验的 Qt 6.11.2 SDK，或以 `scripts/build-qt.ps1` 从官方源码重建。不要隐式追踪 latest 或每次 configure 重建 Qt。
 - MSVC 通过 `vswhere -prerelease` 发现并用 `vcvars64.bat` 初始化，不硬编码工具链版本目录。构建目标必须真实，不生成占位目标。
 - 本工程 EXE/DLL/PDB 被占用时，先关闭本工程应用，成功重建后恢复；不得误停旧工具。
 - 需要用户交互的 MT 主程序、替换后重启及自更新回退必须以正常窗口方式启动；静默驻留由应用的“启动时隐藏面板”设置控制，不能以进程级 Hidden 代替。隐藏方式只用于明确的后台助手或隔离检查，进程存活不代表窗口可唤起。
