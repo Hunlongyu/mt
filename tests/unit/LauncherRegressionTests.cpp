@@ -661,6 +661,9 @@ class LauncherRegressionTests final : public QObject {
         Theme theme;
         theme.apply(mode);
         LauncherPanel panel(theme, service);
+        // This test sends synthetic Enter/Leave events. Keep the native desktop
+        // from injecting a competing Leave while an asynchronous save is pending.
+        panel.setAttribute(Qt::WA_DontShowOnScreen);
         panel.setPinned(true);
         panel.showNear({20, 20});
         activateForTest(&panel);
