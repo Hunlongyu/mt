@@ -43,9 +43,247 @@ Q_IMPORT_PLUGIN(QICOPlugin)
 namespace mt {
 class ClipboardIntegrationTests final : public QObject {
     Q_OBJECT
+    struct CaptureSource {
+        const QMimeData* mime = nullptr;
+        quint32 sequence = 100;
+        int reads = 0;
+    };
+    static void bindCaptureSource(ClipboardService& service, CaptureSource& source) {
+        service.observing_ = true; // No connection to the actual system clipboard.
+        service.clipboardMimeData_ = [&source] {
+            ++source.reads;
+            return source.mime;
+        };
+        service.clipboardSequence_ = [&source] { return source.sequence; };
+    }
+    static ClipboardRecords lastRecords(const QSignalSpy& records) {
+        return records.isEmpty() ? ClipboardRecords{}
+                                 : qvariant_cast<ClipboardRecords>(records.last().at(0));
+    }
   private Q_SLOTS:
     void initTestCase() {
         qApp->setQuitOnLastWindowClosed(false);
+    }
+    void delayedImageCaptureRetriesWithoutReportingOrBlocking() {
+        QTemporaryDir dir;
+        ClipboardService service(dir.filePath(QStringLiteral("clips.sqlite")));
+        QSignalSpy ready(&service, &ClipboardService::ready);
+        QSignalSpy errors(&service, &ClipboardService::failed);
+        QSignalSpy records(&service, &ClipboardService::recordsChanged);
+        service.start(false);
+        QTRY_COMPARE(ready.size(), 1);
+        QMimeData unavailable, available;
+        unavailable.setImageData(QImage{});
+        QImage bitmap(12, 9, QImage::Format_ARGB32);
+        bitmap.fill(Qt::green);
+        available.setImageData(bitmap);
+        CaptureSource source{&unavailable};
+        bindCaptureSource(service, source);
+        service.snapshot();
+        QCOMPARE(source.reads, 1);
+        QCOMPARE(errors.size(), 0);
+        bool guiTicked = false;
+        QTimer::singleShot(0, &service, [&] { guiTicked = true; source.mime = &available; });
+        QTRY_COMPARE(lastRecords(records).size(), 1);
+        QVERIFY(guiTicked);
+        QCOMPARE(source.reads, 2);
+        QCOMPARE(lastRecords(records).front().kind, ClipKind::Image);
+        bool loaded = false;
+        service.retrieve(lastRecords(records).front().id, [&](ClipboardRecord record) {
+            QCOMPARE(QImage::fromData(record.image), bitmap);
+            loaded = true;
+        });
+        QTRY_VERIFY(loaded);
+        QTest::qWait(850);
+        QCOMPARE(source.reads, 2);
+        QCOMPARE(errors.size(), 0);
+        QCOMPARE(lastRecords(records).size(), 1);
+    }
+    void unreadableImageCaptureEventuallyReportsOnce() {
+        QTemporaryDir dir;
+        ClipboardService service(dir.filePath(QStringLiteral("clips.sqlite")));
+        QSignalSpy ready(&service, &ClipboardService::ready);
+        QSignalSpy errors(&service, &ClipboardService::failed);
+        QSignalSpy records(&service, &ClipboardService::recordsChanged);
+        service.start(false);
+        QTRY_COMPARE(ready.size(), 1);
+        ClipboardRecord existing;
+        existing.text = QStringLiteral("preserve existing history");
+        service.capture(existing);
+        QTRY_COMPARE(lastRecords(records).size(), 1);
+        QMimeData unavailable;
+        unavailable.setImageData(QImage{});
+        CaptureSource source{&unavailable};
+        bindCaptureSource(service, source);
+        service.snapshot();
+        QCOMPARE(errors.size(), 0);
+        QTRY_COMPARE_WITH_TIMEOUT(errors.size(), 1, 2500);
+        QCOMPARE(source.reads, 5);
+        QTest::qWait(500);
+        QCOMPARE(errors.size(), 1);
+        QCOMPARE(source.reads, 5);
+        QCOMPARE(lastRecords(records).front().text, existing.text);
+    }
+    void newCopySupersedesPendingImageCapture() {
+        QTemporaryDir dir;
+        ClipboardService service(dir.filePath(QStringLiteral("clips.sqlite")));
+        QSignalSpy ready(&service, &ClipboardService::ready);
+        QSignalSpy errors(&service, &ClipboardService::failed);
+        QSignalSpy records(&service, &ClipboardService::recordsChanged);
+        service.start(false);
+        QTRY_COMPARE(ready.size(), 1);
+        QMimeData unavailable, newer;
+        unavailable.setImageData(QImage{});
+        newer.setText(QStringLiteral("new copy"));
+        CaptureSource source{&unavailable};
+        bindCaptureSource(service, source);
+        service.snapshot();
+        source.mime = &newer;
+        ++source.sequence;
+        service.snapshot();
+        QTRY_COMPARE(lastRecords(records).size(), 1);
+        QTest::qWait(100);
+        QCOMPARE(lastRecords(records).front().text, newer.text());
+        QCOMPARE(source.reads, 2);
+        QCOMPARE(errors.size(), 0);
+    }
+    void pendingImageCaptureCancelsOnSequenceChangePauseDisableAndWriteback_data() {
+        QTest::addColumn<int>("action");
+        QTest::newRow("sequence-before-notification") << 0;
+        QTest::newRow("pause-and-resume") << 1;
+        QTest::newRow("disable-and-enable") << 2;
+        QTest::newRow("own-writeback-notification") << 3;
+    }
+    void pendingImageCaptureCancelsOnSequenceChangePauseDisableAndWriteback() {
+        QFETCH(int, action);
+        QTemporaryDir dir;
+        ClipboardService service(dir.filePath(QStringLiteral("clips.sqlite")));
+        QSignalSpy ready(&service, &ClipboardService::ready);
+        QSignalSpy errors(&service, &ClipboardService::failed);
+        QSignalSpy records(&service, &ClipboardService::recordsChanged);
+        service.start(false);
+        QTRY_COMPARE(ready.size(), 1);
+        QMimeData unavailable, newer;
+        unavailable.setImageData(QImage{});
+        newer.setText(QStringLiteral("must not capture stale attempt"));
+        CaptureSource source{&unavailable};
+        bindCaptureSource(service, source);
+        service.snapshot();
+        source.mime = &newer;
+        if (action == 0) ++source.sequence;
+        if (action == 1) {
+            service.configure(true, true, 1000, 500);
+            service.configure(true, false, 1000, 500);
+        }
+        if (action == 2) {
+            service.configure(false, false, 1000, 500);
+            service.configure(true, false, 1000, 500);
+        }
+        if (action == 3) {
+            newer.setData(QStringLiteral("application/x-mt-writeback"), service.ownMarker_.toUtf8());
+            ++source.sequence;
+            service.snapshot();
+        }
+        QTest::qWait(150);
+        QCOMPARE(errors.size(), 0);
+        QCOMPARE(source.reads, action == 3 ? 2 : 1);
+        QVERIFY(lastRecords(records).isEmpty());
+    }
+    void destroyedServiceCancelsPendingImageCapture() {
+        QTemporaryDir dir;
+        QMimeData unavailable;
+        unavailable.setImageData(QImage{});
+        CaptureSource source{&unavailable};
+        int errors = 0;
+        {
+            ClipboardService service(dir.filePath(QStringLiteral("clips.sqlite")));
+            bindCaptureSource(service, source);
+            connect(&service, &ClipboardService::failed, this, [&](const QString&) { ++errors; });
+            service.snapshot();
+        }
+        QTest::qWait(150);
+        QCOMPARE(source.reads, 1);
+        QCOMPARE(errors, 0);
+    }
+    void clipboardChangeDuringReadDiscardsTheResult() {
+        class ChangingImageMime final : public QMimeData {
+          public:
+            std::function<void()> duringRead;
+          protected:
+            QVariant retrieveData(const QString& name, QMetaType type) const override {
+                auto result = QMimeData::retrieveData(name, type);
+                if (name == QStringLiteral("application/x-qt-image"))
+                    duringRead();
+                return result;
+            }
+        };
+        QTemporaryDir dir;
+        ClipboardService service(dir.filePath(QStringLiteral("clips.sqlite")));
+        QSignalSpy ready(&service, &ClipboardService::ready);
+        QSignalSpy errors(&service, &ClipboardService::failed);
+        QSignalSpy records(&service, &ClipboardService::recordsChanged);
+        service.start(false);
+        QTRY_COMPARE(ready.size(), 1);
+        ChangingImageMime older;
+        older.setImageData(QImage(4, 4, QImage::Format_RGB32));
+        CaptureSource source{&older};
+        bindCaptureSource(service, source);
+        older.duringRead = [&] {
+            ++source.sequence; // Windows sequence changes before its notification is dispatched.
+        };
+        service.snapshot();
+        QTest::qWait(100);
+        QVERIFY(lastRecords(records).isEmpty());
+        QCOMPARE(source.reads, 1);
+        QCOMPARE(errors.size(), 0);
+    }
+    void missingMimeDataCanRecoverOnTheNextAttempt() {
+        QTemporaryDir dir;
+        ClipboardService service(dir.filePath(QStringLiteral("clips.sqlite")));
+        QSignalSpy ready(&service, &ClipboardService::ready);
+        QSignalSpy errors(&service, &ClipboardService::failed);
+        QSignalSpy records(&service, &ClipboardService::recordsChanged);
+        service.start(false);
+        QTRY_COMPARE(ready.size(), 1);
+        QMimeData available;
+        available.setImageData(QImage(4, 4, QImage::Format_RGB32));
+        CaptureSource source;
+        bindCaptureSource(service, source);
+        service.snapshot();
+        source.mime = &available;
+        QTRY_COMPARE(lastRecords(records).size(), 1);
+        QCOMPARE(errors.size(), 0);
+        QCOMPARE(source.reads, 2);
+    }
+    void invalidImagePayloadDoesNotRetry() {
+        QTemporaryDir dir;
+        ClipboardService service(dir.filePath(QStringLiteral("clips.sqlite")));
+        QSignalSpy errors(&service, &ClipboardService::failed);
+        QMimeData oversized;
+        oversized.setImageData(QImage(ClipboardRecord::maxImageSide + 1, 1, QImage::Format_ARGB32));
+        CaptureSource source{&oversized};
+        bindCaptureSource(service, source);
+        service.snapshot();
+        QCOMPARE(errors.size(), 1);
+        QTest::qWait(100);
+        QCOMPARE(source.reads, 1);
+        QCOMPARE(errors.size(), 1);
+    }
+    void unsupportedClipboardContentStaysSilent() {
+        QTemporaryDir dir;
+        ClipboardService service(dir.filePath(QStringLiteral("clips.sqlite")));
+        QSignalSpy errors(&service, &ClipboardService::failed);
+        QMimeData empty, invisibleHtml;
+        invisibleHtml.setHtml(QStringLiteral("<!-- no visible content -->"));
+        CaptureSource source{&empty};
+        bindCaptureSource(service, source);
+        service.snapshot();
+        source.mime = &invisibleHtml;
+        ++source.sequence;
+        service.snapshot();
+        QTest::qWait(100);
+        QCOMPARE(errors.size(), 0);
+        QCOMPARE(source.reads, 2);
     }
     void hostCanExitWithSystemSettingsOpen() {
         QTemporaryDir dir;

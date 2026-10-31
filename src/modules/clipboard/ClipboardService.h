@@ -34,10 +34,12 @@ class ClipboardService final : public QObject {
     void ready();
     void recordsChanged(mt::ClipboardRecords records);
     void failed(const QString& error);
+    void diagnostic(const QString& message);
 
   private:
     friend class ClipboardIntegrationTests;
     void snapshot();
+    void snapshotAttempt(quint64 generation, quint32 sequence, int attempt);
     void mutate(std::function<std::expected<void, QString>(ClipboardStore&)> change);
     void requestCurrent();
     void dispatchQuery();
@@ -49,6 +51,10 @@ class ClipboardService final : public QObject {
     std::atomic<quint64> queryGeneration_{0};
     QTimer queryTimer_;
     QString ownMarker_;
+    // Obtain a fresh view per attempt; isolated tests supply delayed MIME data.
+    std::function<const QMimeData*()> clipboardMimeData_;
+    std::function<quint32()> clipboardSequence_;
+    quint64 captureGeneration_ = 0;
     bool enabled_ = true;
     bool paused_ = false;
     bool observing_ = false;

@@ -463,6 +463,9 @@ bool DesktopServices::clipboardSensitive() {
         RegisterClipboardFormatW(L"ExcludeClipboardContentFromMonitorProcessing");
     return marker && IsClipboardFormatAvailable(marker);
 }
+quint32 DesktopServices::clipboardSequence() {
+    return GetClipboardSequenceNumber();
+}
 bool DesktopServices::modifiersReleased() {
     return !((GetAsyncKeyState(VK_CONTROL) | GetAsyncKeyState(VK_MENU) |
               GetAsyncKeyState(VK_SHIFT) | GetAsyncKeyState(VK_LWIN) | GetAsyncKeyState(VK_RWIN)) &

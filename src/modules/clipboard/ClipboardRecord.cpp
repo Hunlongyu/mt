@@ -73,18 +73,18 @@ std::expected<void, QString> ClipboardRecord::decodeFormats(const QByteArray& da
     formats = std::move(restored);
     return {};
 }
-std::expected<ClipboardRecord, QString> ClipboardRecord::snapshot(const QMimeData& m) {
+std::expected<ClipboardRecord, ClipSnapshotError> ClipboardRecord::snapshot(const QMimeData& m) {
     ClipboardRecord r;
     qsizetype bytes = 0;
     const auto names = m.formats();
     if (names.size() > maxFormats)
-        return std::unexpected(tx(u"剪贴板格式数量超限"));
+        return std::unexpected(ClipSnapshotError{tx(u"剪贴板格式数量超限")});
     for (const auto& name : names) {
         if (!persistentFormat(name))
             continue;
         const auto data = m.data(name);
         if ((bytes += data.size()) > maxFormatBytes)
-            return std::unexpected(tx(u"剪贴板附加格式超过 16 MiB，未记录"));
+            return std::unexpected(ClipSnapshotError{tx(u"剪贴板附加格式超过 16 MiB，未记录")});
         r.formats.insert(name, data);
     }
     if (m.hasUrls()) {
@@ -95,9 +95,9 @@ std::expected<ClipboardRecord, QString> ClipboardRecord::snapshot(const QMimeDat
             r.files.append(url.toLocalFile());
             length += r.files.last().size();
             if (r.files.size() > maxFiles)
-                return std::unexpected(tx(u"文件列表超过 1000 项"));
+                return std::unexpected(ClipSnapshotError{tx(u"文件列表超过 1000 项")});
             if (length > maxFileCharacters)
-                return std::unexpected(tx(u"文件路径总长度超限"));
+                return std::unexpected(ClipSnapshotError{tx(u"文件路径总长度超限")});
         }
     }
     r.text = m.hasText() ? m.text() : QString{};
@@ -105,7 +105,8 @@ std::expected<ClipboardRecord, QString> ClipboardRecord::snapshot(const QMimeDat
     if (m.hasImage()) {
         r.pendingImage = qvariant_cast<QImage>(m.imageData());
         if (r.pendingImage.isNull())
-            return std::unexpected(tx(u"图片格式不可读取"));
+            return std::unexpected(ClipSnapshotError{tx(u"图片格式不可读取"),
+                                                    ClipSnapshotErrorKind::ImageUnavailable});
     }
     // Keep all parallel representations; kind only selects the list/preview UI.
     if (!r.files.isEmpty()) {
@@ -129,9 +130,13 @@ std::expected<ClipboardRecord, QString> ClipboardRecord::snapshot(const QMimeDat
     } else if (!r.formats.isEmpty())
         r.kind = ClipKind::Formats;
     else
-        return std::unexpected(QStringLiteral("unsupported"));
+        return std::unexpected(ClipSnapshotError{QStringLiteral("unsupported"),
+                                                ClipSnapshotErrorKind::Unsupported});
     if (auto valid = r.validate(); !valid)
-        return std::unexpected(valid.error());
+        return std::unexpected(ClipSnapshotError{
+            valid.error(), valid.error() == QStringLiteral("unsupported")
+                               ? ClipSnapshotErrorKind::Unsupported
+                               : ClipSnapshotErrorKind::Invalid});
     return r;
 }
 std::expected<void, QString> ClipboardRecord::validate() const {

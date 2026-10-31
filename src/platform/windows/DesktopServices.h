@@ -56,6 +56,7 @@ class DesktopServices final : public QObject {
     // Relative paths resolve against base; environment variables are expanded.
     static bool revealInExplorer(const QString& path, const QString& base = {});
     static bool clipboardSensitive();
+    static quint32 clipboardSequence();
     static bool modifiersReleased();
     static std::expected<void, QString> sendPaste(WindowTarget target);
     static std::expected<void, QString> launch(const LaunchItem& item,

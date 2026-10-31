@@ -11,6 +11,11 @@
 namespace mt {
 enum class ClipKind { Text, Html, Image, Files, Formats };
 enum class ClipFlag { Favorite, Pinned };
+enum class ClipSnapshotErrorKind { Invalid, Unsupported, ImageUnavailable };
+struct ClipSnapshotError {
+    QString message;
+    ClipSnapshotErrorKind kind = ClipSnapshotErrorKind::Invalid;
+};
 struct ClipboardRecord {
     static constexpr qsizetype maxText = 1'000'000;
     static constexpr qsizetype maxHtml = 4'000'000;
@@ -42,7 +47,7 @@ struct ClipboardRecord {
     std::expected<void, QString> validate() const;
     void finalize(); // worker thread: image encoding and content hash
     std::unique_ptr<QMimeData> mime(bool plainText = false) const;
-    static std::expected<ClipboardRecord, QString> snapshot(const QMimeData& mime);
+    static std::expected<ClipboardRecord, ClipSnapshotError> snapshot(const QMimeData& mime);
 };
 using ClipboardRecords = QList<ClipboardRecord>;
 using ClipConsumer = std::function<std::expected<void, QString>(ClipboardRecord)>;

@@ -7,6 +7,7 @@
 #include <QGuiApplication>
 #include <QPointer>
 #include <QUuid>
+#include <array>
 
 namespace mt {
 class ClipboardWorker final : public QObject {
@@ -16,12 +17,15 @@ class ClipboardWorker final : public QObject {
 };
 ClipboardService::ClipboardService(const QString& path, QObject* parent)
     : QObject(parent), path_(path), ownMarker_(QUuid::createUuid().toString()) {
+    clipboardMimeData_ = [] { return QGuiApplication::clipboard()->mimeData(); };
+    clipboardSequence_ = &DesktopServices::clipboardSequence;
     queryTimer_.setSingleShot(true);
     queryTimer_.setInterval(40);
     connect(&queryTimer_, &QTimer::timeout, this, &ClipboardService::dispatchQuery);
 }
 ClipboardService::~ClipboardService() {
     observing_ = false;
+    ++captureGeneration_;
     queryTimer_.stop();
     ++queryGeneration_;
     if (thread_.isRunning()) {
@@ -72,6 +76,8 @@ void ClipboardService::start(bool observeSystem) {
 void ClipboardService::configure(bool enabled, bool paused, int storageLimit, int displayLimit) {
     enabled_ = enabled;
     paused_ = paused;
+    if (!enabled_ || paused_)
+        ++captureGeneration_;
     const bool listChanged = displayLimit != displayLimit_;
     storageLimit_ = storageLimit;
     displayLimit_ = displayLimit;
@@ -79,21 +85,51 @@ void ClipboardService::configure(bool enabled, bool paused, int storageLimit, in
         requestCurrent();
 }
 void ClipboardService::snapshot() {
+    const auto generation = ++captureGeneration_;
     if (!observing_ || !enabled_ || paused_)
         return;
-    const auto* mime = QGuiApplication::clipboard()->mimeData();
-    if (!mime)
+    snapshotAttempt(generation, clipboardSequence_(), 0);
+}
+void ClipboardService::snapshotAttempt(quint64 generation, quint32 sequence, int attempt) {
+    const auto current = [&] {
+        return observing_ && enabled_ && !paused_ && generation == captureGeneration_ &&
+               sequence == clipboardSequence_();
+    };
+    if (!current())
         return;
-    if (QString::fromUtf8(mime->data(QStringLiteral("application/x-mt-writeback"))) ==
+    // Delayed rendering can fail just after the notification. Never retain a
+    // borrowed QMimeData across an event-loop turn, or retry a newer clipboard.
+    const auto* mime = clipboardMimeData_();
+    if (!current())
+        return;
+    if (mime && QString::fromUtf8(mime->data(QStringLiteral("application/x-mt-writeback"))) ==
         ownMarker_)
         return;
-    auto record = ClipboardRecord::snapshot(*mime);
+    if (!current())
+        return;
+    auto record = mime ? ClipboardRecord::snapshot(*mime)
+                       : std::unexpected(ClipSnapshotError{tx(u"剪贴板内容暂时无法读取"),
+                                                           ClipSnapshotErrorKind::ImageUnavailable});
+    // Reading OLE data can dispatch messages and invalidate this attempt.
+    if (!current())
+        return;
     if (!record) {
-        if (record.error() != QStringLiteral("unsupported"))
-            Q_EMIT failed(record.error());
+        static constexpr std::array retryDelays{50, 100, 200, 400};
+        if (record.error().kind == ClipSnapshotErrorKind::ImageUnavailable &&
+            attempt < static_cast<int>(retryDelays.size())) {
+            QTimer::singleShot(retryDelays[attempt], this, [this, generation, sequence, attempt] {
+                snapshotAttempt(generation, sequence, attempt + 1);
+            });
+            return;
+        }
+        if (record.error().kind != ClipSnapshotErrorKind::Unsupported)
+            Q_EMIT failed(record.error().message);
         return;
     }
     record->sensitive = DesktopServices::clipboardSensitive();
+    if (attempt > 0)
+        Q_EMIT diagnostic(QStringLiteral("clipboard capture recovered sequence=%1 attempts=%2")
+                              .arg(sequence).arg(attempt + 1));
     capture(std::move(*record));
 }
 void ClipboardService::capture(ClipboardRecord record) {
@@ -258,6 +294,7 @@ bool ClipboardService::write(const ClipboardRecord& record, bool plain) {
     }
     auto data = record.mime(plain);
     data->setData(QStringLiteral("application/x-mt-writeback"), ownMarker_.toUtf8());
+    ++captureGeneration_;
     auto* clipboard = QGuiApplication::clipboard();
     clipboard->setMimeData(data.release());
     const auto* current = clipboard->mimeData();

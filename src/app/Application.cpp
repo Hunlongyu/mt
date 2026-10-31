@@ -157,6 +157,7 @@ std::expected<void, QString> Application::start() {
     // this in sync; an interrupted pair was recovered by SettingsStore::load.
     settings_.launcherColumns = launcher_->catalog().columns;
     connect(clipboard_.get(), &ClipboardService::failed, this, &Application::error);
+    connect(clipboard_.get(), &ClipboardService::diagnostic, this, &Application::trace);
     connect(clipboard_.get(), &ClipboardService::ready, this, [this] {
         if (preview_)
             seedPreview();
