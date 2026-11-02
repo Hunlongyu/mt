@@ -141,7 +141,6 @@ std::expected<Settings, QString> Settings::decode(const QByteArray& data) {
                             QStringLiteral("lockPaused"),
                             QStringLiteral("clipboardPaused"),
                             QStringLiteral("maskSensitive"),
-                            QStringLiteral("launcherPinned"),
                             QStringLiteral("requirePassword"),
                             QStringLiteral("gestureTrail"),
                             QStringLiteral("disableGesturesFullscreen"),
@@ -169,7 +168,6 @@ std::expected<Settings, QString> Settings::decode(const QByteArray& data) {
     LOAD_BOOL(lockPaused);
     LOAD_BOOL(clipboardPaused);
     LOAD_BOOL(maskSensitive);
-    LOAD_BOOL(launcherPinned);
     LOAD_BOOL(requirePassword);
     LOAD_BOOL(gestureTrail);
     LOAD_BOOL(gestureShowName);
@@ -271,7 +269,6 @@ QByteArray Settings::encode() const {
     SAVE(clipboardHotkey);
     SAVE(launcherHotkey);
     SAVE(lockHotkey);
-    SAVE(launcherPinned);
     SAVE(launcherColumns);
     SAVE(launcherRows);
     SAVE(launcherEdgeEnabled);

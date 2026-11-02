@@ -128,6 +128,18 @@ class BehaviorTests final : public QObject {
         QCOMPARE(decoded->historyLimit, 123);
         QCOMPARE(decoded->extra[QStringLiteral("futureValue")].toInt(), 17);
     }
+    void retiredLauncherPinSettingDoesNotRequireMigration() {
+        auto legacy = Settings::decode(R"({"schema":1,"launcherPinned":true,"launcherColumns":5})");
+        QVERIFY(legacy);
+        QCOMPARE(legacy->launcherColumns, 5);
+        legacy->launcherRows = 6;
+        const auto saved = QJsonDocument::fromJson(legacy->encode()).object();
+        // Keep retired data as an inert unknown field so rolling back preserves it.
+        QCOMPARE(saved.value(QStringLiteral("launcherPinned")).toBool(), true);
+        QCOMPARE(saved.value(QStringLiteral("launcherRows")).toInt(), 6);
+        QVERIFY(!QJsonDocument::fromJson(Settings::defaults().encode()).object()
+                     .contains(QStringLiteral("launcherPinned")));
+    }
     void corruptSettingsAreNeverOverwritten() {
         QTemporaryDir dir;
         QVERIFY(dir.isValid());

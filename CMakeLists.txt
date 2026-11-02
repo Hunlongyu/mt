@@ -55,6 +55,7 @@ target_link_libraries(mt_core PUBLIC Qt6::Core Qt6::Gui Qt6::Sql PRIVATE mt_opti
 qt_add_library(mt_platform STATIC src/platform/windows/DesktopServices.cpp src/platform/windows/CaretLocator.cpp src/platform/windows/ShellJobs.cpp
     src/platform/windows/GestureInput.cpp src/platform/windows/GestureActions.cpp
     src/platform/windows/MenuFrame.cpp src/platform/windows/EdgeWatcher.cpp
+    src/platform/windows/DragWheelRouter.cpp
     src/platform/windows/LockPassword.cpp src/platform/windows/LockSession.cpp
     src/platform/windows/StartupRegistration.cpp src/platform/windows/AdminBridge.cpp
     src/platform/windows/UpdateInstaller.cpp)
@@ -212,7 +213,6 @@ foreach(consumer IN ITEMS mt mt_gesture_tests mt_widget_tests mt_clipboard_tests
             BASE resources/icons
             FILES
                 resources/icons/lucide/menu.svg
-                resources/icons/lucide/pin.svg
                 resources/icons/lucide/arrow-up-to-line.svg
                 resources/icons/lucide/x.svg
                 resources/icons/lucide/search.svg

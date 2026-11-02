@@ -13,11 +13,13 @@ class QToolButton;
 class QScrollArea;
 namespace mt {
 class Theme;
+class DragWheelRouter;
 class LauncherPanel final : public Panel {
     Q_OBJECT
   public:
-    LauncherPanel(Theme& theme, LauncherService& service);
-    void setPinned(bool pinned);
+    static constexpr int headerHeight = 28;
+    // Isolated previews stay visible for rendering; normal use always auto-hides.
+    LauncherPanel(Theme& theme, LauncherService& service, bool preview = false);
     // Rebuilds the tiles for a grid size; the window size follows. Columns must
     // match the catalog's layout, which the service migrates first.
     void setGrid(int columns, int rows);
@@ -39,7 +41,6 @@ class LauncherPanel final : public Panel {
     void revealRequested(const QString& target);
     void importRequested(QStringList paths, QString category, int slot);
     void settingsRequested();
-    void pinnedChanged(bool pinned);
     void iconRequested(const QString& id, const QString& source);
 
   protected:
@@ -47,6 +48,7 @@ class LauncherPanel final : public Panel {
     void keyPressEvent(QKeyEvent*) override;
     void dragEnterEvent(QDragEnterEvent*) override;
     void dragMoveEvent(QDragMoveEvent*) override;
+    void dragLeaveEvent(QDragLeaveEvent*) override;
     void dropEvent(QDropEvent*) override;
     void moveEvent(QMoveEvent*) override;
     void hideEvent(QHideEvent*) override;
@@ -94,6 +96,7 @@ class LauncherPanel final : public Panel {
     void checkFocusLater();
     Theme& theme_;
     LauncherService& service_;
+    const bool preview_;
     QList<QToolButton*> tiles_;
     QWidget* gridWidget_ = nullptr;
     QGridLayout* grid_ = nullptr;
@@ -101,7 +104,6 @@ class LauncherPanel final : public Panel {
     QSize desiredSize_;
     int columns_ = 0;
     int rows_ = 0;
-    QToolButton* pin_;
     QToolButton* menuButton_ = nullptr;
     QToolButton* closeButton_ = nullptr;
     QLabel* hoverTitle_ = nullptr;
@@ -133,5 +135,7 @@ class LauncherPanel final : public Panel {
     int page_ = 0;
     int selected_ = 0;
     QPoint dragStart_;
+    DragWheelRouter* dragWheel_ = nullptr;
+    int dragHoverTab_ = -1;
 };
 } // namespace mt

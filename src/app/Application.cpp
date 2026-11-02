@@ -444,7 +444,6 @@ void Application::applySettings(const Settings& next, SettingsCompletion done) {
                     clipboardPanel_->hide();
             }
             if (launcherPanel_) {
-                launcherPanel_->setPinned(next.launcherPinned);
                 if (!next.launcherEnabled)
                     launcherPanel_->hide();
             }
@@ -468,11 +467,10 @@ void Application::error(const QString& message) {
 }
 LauncherPanel& Application::launcherPanel() {
     if (!launcherPanel_) {
-        launcherPanel_ = std::make_unique<LauncherPanel>(theme_, *launcher_);
+        launcherPanel_ = std::make_unique<LauncherPanel>(theme_, *launcher_, preview_);
         gestures_->setLauncherWindow(launcherPanel_.get());
         launcherPanel_->setAnimated(DesktopServices::clientAnimationsEnabled());
         launcherPanel_->setPanelOpacity(settings_.launcherOpacity);
-        launcherPanel_->setPinned(settings_.launcherPinned);
         launcherPanel_->setGrid(launcher_->catalog().columns, settings_.launcherRows);
         connect(launcherPanel_.get(), &LauncherPanel::iconPriorityChanged,
                 &shellJobs_, &ShellJobs::prioritizeIcons);
@@ -499,16 +497,6 @@ LauncherPanel& Application::launcherPanel() {
                         if (!result) error(result.error());
                     });
                 });
-        connect(launcherPanel_.get(), &LauncherPanel::pinnedChanged, this, [this](bool value) {
-            auto next = settings_;
-            next.launcherPinned = value;
-            applySettings(next, [this](auto result) {
-                if (!result) {
-                    if (launcherPanel_) launcherPanel_->setPinned(settings_.launcherPinned);
-                    error(result.error());
-                }
-            });
-        });
     }
     return *launcherPanel_;
 }
@@ -1263,7 +1251,6 @@ void Application::saveEvidence(const QString& folder) {
     QDir().mkpath(folder);
     auto& launch = launcherPanel();
     auto& clip = clipboardPanel();
-    launch.keepOpen = true;
     launch.showNear(QPoint(160, 180));
     clip.showNear(QPoint(510, 180), false);
     // Open the hover/Space preview for the second record; the full record arrives

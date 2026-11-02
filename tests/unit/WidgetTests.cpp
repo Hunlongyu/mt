@@ -649,8 +649,7 @@ class WidgetTests final : public QObject {
         QVERIFY(service.load());
         Theme theme;
         theme.apply(QStringLiteral("dark"));
-        LauncherPanel panel(theme, service);
-        panel.keepOpen = true;
+        LauncherPanel panel(theme, service, true);
         panel.showNear({30, 30});
         panel.refresh();
         QApplication::sendPostedEvents();
@@ -664,9 +663,9 @@ class WidgetTests final : public QObject {
                     first = tile;
             }
         QCOMPARE(count, 28);
-        QCOMPARE(panel.size(), QSize(318, 540));
+        QCOMPARE(panel.size(), QSize(318, 532));
         QVERIFY(first);
-        QCOMPARE(first->mapTo(&panel, QPoint(0, 0)), QPoint(9, Theme::headerHeight + 8));
+        QCOMPARE(first->mapTo(&panel, QPoint(0, 0)), QPoint(9, LauncherPanel::headerHeight + 8));
         // Tabs align with the grid and stay clear of the rounded corners, so the
         // selected underline of an edge tab never bends.
         auto* tabs = panel.findChild<QTabBar*>();
@@ -690,10 +689,10 @@ class WidgetTests final : public QObject {
                     last = tile;
             }
         QCOMPARE(count, 18);
-        QCOMPARE(panel.size(), QSize(18 + 6 * 72 + 5 * 4, Theme::headerHeight + 16 + 3 * 62 + 2 * 4 + 30));
+        QCOMPARE(panel.size(), QSize(18 + 6 * 72 + 5 * 4, LauncherPanel::headerHeight + 16 + 3 * 62 + 2 * 4 + 30));
         QVERIFY(last);
         QCOMPARE(last->mapTo(&panel, QPoint(0, 0)),
-                 QPoint(9 + 5 * 76, Theme::headerHeight + 8 + 2 * 66));
+                 QPoint(9 + 5 * 76, LauncherPanel::headerHeight + 8 + 2 * 66));
         QCOMPARE(panel.gridColumns(), 6);
         QCOMPARE(panel.gridRows(), 3);
     }
@@ -703,8 +702,7 @@ class WidgetTests final : public QObject {
         QVERIFY(service.load());
         Theme theme;
         theme.apply(QStringLiteral("dark"));
-        LauncherPanel panel(theme, service);
-        panel.keepOpen = true;
+        LauncherPanel panel(theme, service, true);
         panel.showNear({30, 30});
         QApplication::sendPostedEvents();
         QToolButton* left = nullptr;
@@ -886,6 +884,7 @@ class WidgetTests final : public QObject {
         QCOMPARE(pages->count(), 6);
         QCOMPARE(pages->currentIndex(), 0);
         QVERIFY(!dialog.findChild<QWidget*>(QStringLiteral("settingsDataRoot")));
+        QVERIFY(!dialog.findChild<QWidget*>(QStringLiteral("launcherPinned")));
         QVERIFY(pages->currentWidget()->findChild<QPushButton*>(QStringLiteral("ThemeChoice")));
         QVERIFY(pages->currentWidget()->findChild<QSpinBox*>(QStringLiteral("launcherOpacity")));
         QVERIFY(!dialog.findChild<QWidget*>(QStringLiteral("language")));
@@ -1185,9 +1184,9 @@ class WidgetTests final : public QObject {
                     return child->height();
             return -1;
         };
-        QCOMPARE(headerOf(launcher), Theme::headerHeight);
+        QCOMPARE(headerOf(launcher), LauncherPanel::headerHeight);
         QCOMPARE(headerOf(panel), Theme::headerHeight);
-        QCOMPARE(launcher.height(), panel.height());
+        QCOMPARE(launcher.height() + 8, panel.height());
     }
     void tooltipsKeepSystemDefaultsAcrossAppThemes_data() {
         QTest::addColumn<Qt::ColorScheme>("systemScheme");

@@ -36,7 +36,6 @@ struct Settings {
     QString openMouseButton = QStringLiteral("middle");  // middle | right | none
     QString launcherHotkey = QStringLiteral("Alt+Space");
     QString lockHotkey = QStringLiteral("Alt+L");
-    bool launcherPinned = false;
     // Launcher grid; the window size follows (3–20 each).
     int launcherColumns = 4;
     int launcherRows = 7;

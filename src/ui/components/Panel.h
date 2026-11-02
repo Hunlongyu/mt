@@ -30,7 +30,6 @@ class Panel : public QWidget {
     qreal panelOpacity() const {
         return opacity_;
     }
-    bool keepOpen = false;
   Q_SIGNALS:
     void dismissed();
     void opacityChanged(qreal value);

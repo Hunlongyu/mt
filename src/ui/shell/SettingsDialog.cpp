@@ -316,8 +316,6 @@ void SettingsDialog::Impl::buildLauncher() {
     auto* box = card(layout, QStringLiteral("唤起与显示"));
     row(box, QStringLiteral("唤起快捷键"), {},
         shortcut(&Settings::launcherHotkey, "launcherHotkey"));
-    row(box, QStringLiteral("保持面板打开"), QStringLiteral("打开项目或切换到其他窗口后保持显示。"),
-        toggle(&Settings::launcherPinned, "launcherPinned", QStringLiteral("保持面板打开")));
     box = card(layout, QStringLiteral("数据导入"));
     auto* import = new QPushButton(QStringLiteral("从 HLaunch 导入…"));
     iconButton(import, theme, Symbol::Upload);

@@ -10,7 +10,6 @@ class QWidget;
 namespace mt {
 enum class Symbol {
     Menu,
-    Pin,
     PinToTop,
     Close,
     Search,
@@ -38,8 +37,7 @@ enum class Symbol {
 class Theme final : public QObject {
     Q_OBJECT
   public:
-    // Shared header metrics: both main panels use one title/toolbar height so
-    // the launcher and clipboard read as the same family of windows.
+    // Standard header metrics. Compact surfaces reuse the style with less height.
     static constexpr int headerHeight = 36;
     static constexpr int headerInset = 4;
     // Short UI motion; callers skip it when Windows client animations are off.

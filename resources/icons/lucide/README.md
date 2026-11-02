@@ -10,7 +10,6 @@
 | Symbol | Lucide | 用途 |
 | --- | --- | --- |
 | Menu | menu | 启动面板菜单 |
-| Pin | pin | 启动面板保持打开 |
 | PinToTop | arrow-up-to-line | 剪贴板置顶 |
 | Close | x | 隐藏面板 |
 | Search | search | 搜索 |

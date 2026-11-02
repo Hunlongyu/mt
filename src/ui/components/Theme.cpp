@@ -112,7 +112,6 @@ QToolButton:checked { background: @button-bg; border-color: @button-bg; }
 QToolButton:checked:hover { background: @button-hover; border-color: @button-hover; }
 QToolButton#LauncherHeaderAction:hover { background: transparent; border-color: @border-strong; }
 QToolButton#LauncherHeaderAction:pressed { background: @surface-selected; border-color: @focus; }
-QToolButton#LauncherHeaderAction:checked, QToolButton#LauncherHeaderAction:checked:hover { background: @button-bg; border-color: @button-bg; }
 QFrame#FilterGroup { background: @surface-subtle; border: 1px solid @border; border-radius: 7px; }
 QToolButton#FilterButton { border-radius: 5px; }
 QToolButton:focus, QPushButton:focus { border: 1px solid @focus; }
@@ -174,8 +173,6 @@ QString Theme::iconAsset(Symbol symbol) {
     switch (symbol) {
     case Symbol::Menu:
         return QStringLiteral("menu");
-    case Symbol::Pin:
-        return QStringLiteral("pin");
     case Symbol::PinToTop:
         return QStringLiteral("arrow-up-to-line");
     case Symbol::Close:

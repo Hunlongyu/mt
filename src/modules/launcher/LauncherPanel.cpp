@@ -1,5 +1,6 @@
 #include "LauncherPanel.h"
 #include "infrastructure/i18n/I18n.h"
+#include "platform/windows/DragWheelRouter.h"
 #include "ui/components/Theme.h"
 #include <QApplication>
 #include <QCheckBox>
@@ -27,6 +28,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QScreen>
+#include <QScopeGuard>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSignalBlocker>
@@ -41,11 +43,15 @@ namespace mt {
 namespace {
 const QString mimeType = QStringLiteral("application/x-mt-launch-item");
 }
-LauncherPanel::LauncherPanel(Theme& theme, LauncherService& service)
-    : Panel(theme, tx(u"MT · 启动面板")), theme_(theme), service_(service) {
+LauncherPanel::LauncherPanel(Theme& theme, LauncherService& service, bool preview)
+    : Panel(theme, tx(u"MT · 启动面板")), theme_(theme), service_(service), preview_(preview) {
     setAcceptDrops(true);
+    dragWheel_ = new DragWheelRouter(this);
+    connect(dragWheel_, &DragWheelRouter::stepped, this, &LauncherPanel::changeCategory);
     auto* title = theme.header(this);
+    title->setFixedHeight(headerHeight);
     auto* header = static_cast<QHBoxLayout*>(title->layout());
+    header->setContentsMargins(6, 2, 6, 2);
     auto* menu = theme.button(Symbol::Menu, tx(u"启动器菜单"), title);
     menuButton_ = menu;
     header->addWidget(menu);
@@ -60,21 +66,17 @@ LauncherPanel::LauncherPanel(Theme& theme, LauncherService& service)
     label->setAlignment(Qt::AlignCenter);
     label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     header->addWidget(label, 1);
-    pin_ = theme.button(Symbol::Pin, tx(u"保持打开（Ctrl+Space）"), title, true);
-    header->addWidget(pin_);
     auto* close = theme.button(Symbol::Close, tx(u"隐藏启动面板（Esc）"), title);
     closeButton_ = close;
     header->addWidget(close);
-    for (auto* action : {menu, pin_, close})
+    for (auto* action : {menu, close}) {
         action->setObjectName(QStringLiteral("LauncherHeaderAction"));
+        action->setFixedSize(28, 24);
+    }
     layoutColumn()->addWidget(title);
     enableTitleDrag(title);
     enableTitleDrag(label);
     connect(close, &QToolButton::clicked, this, &QWidget::hide);
-    connect(pin_, &QToolButton::clicked, this, [this](bool checked) {
-        keepOpen = checked;
-        Q_EMIT pinnedChanged(checked);
-    });
     connect(menu, &QToolButton::clicked, this, [this, menu] {
         QMenu popup(this);
         popup.addAction(tx(u"添加项目（Insert）"), this, &LauncherPanel::addItem);
@@ -244,10 +246,6 @@ QString LauncherPanel::itemAt(int index) const {
         return {};
     return c.categories[category].slots.value(absoluteSlot(index));
 }
-void LauncherPanel::setPinned(bool pinned) {
-    keepOpen = pinned;
-    pin_->setChecked(pinned);
-}
 void LauncherPanel::setGrid(int columns, int rows) {
     columns = qBound(LauncherCatalog::minGrid, columns, LauncherCatalog::maxGrid);
     rows = qBound(LauncherCatalog::minGrid, rows, LauncherCatalog::maxGrid);
@@ -288,9 +286,9 @@ void LauncherPanel::setGrid(int columns, int rows) {
     // 72 × 62 tiles, 4 px gaps, 9/8 px grid insets, 30 px category bar:
     // 4 × 7 gives the 318 × 504 body of the original HLaunch screenshot.
     const QSize size(18 + columns * 72 + (columns - 1) * 4,
-                     Theme::headerHeight + 16 + rows * 62 + (rows - 1) * 4 + 30);
+                     headerHeight + 16 + rows * 62 + (rows - 1) * 4 + 30);
     desiredSize_ = size;
-    gridWidget_->setFixedSize(size.width(), size.height() - Theme::headerHeight - 30);
+    gridWidget_->setFixedSize(size.width(), size.height() - headerHeight - 30);
     setFixedSize(size);
     searchPopup_->setFixedWidth(size.width());
     if (isVisible()) {
@@ -365,10 +363,10 @@ void LauncherPanel::applyTileStyle() {
     const auto style = QStringLiteral("QToolButton { background:%1; border:1px solid transparent; "
                                       "border-radius:6px; padding:3px 1px; font-size:12px; } "
                                       "QToolButton[empty=\"true\"] { background:transparent; "
-                                      "border:1px dashed %5; } "
+                                      "border:1px solid %5; } "
                                       "QToolButton:hover { background:%1; border:1px solid %2; } "
                                       "QToolButton[empty=\"true\"]:hover { background:transparent; "
-                                      "border:1px dashed %2; } QToolButton:pressed, "
+                                      "border:1px solid %2; } QToolButton:pressed, "
                                       "QToolButton[empty=\"true\"]:pressed { background:%3; } "
                                       "QToolButton:focus, QToolButton[empty=\"true\"]:focus "
                                       "{ border:1px solid %4; } QToolButton:disabled, "
@@ -510,7 +508,7 @@ void LauncherPanel::activateItem(const QString& id) {
 }
 void LauncherPanel::launchCopy(const LaunchItem& item) {
     Q_EMIT launchRequested(item);
-    if (!keepOpen)
+    if (!preview_)
         hide();
     else
         searchPopup_->hide();
@@ -524,7 +522,7 @@ void LauncherPanel::launchCategory(const QString& category) {
     for (const auto& id : c.categories[index].slots)
         if (!id.isEmpty())
             Q_EMIT launchRequested(c.items.value(id));
-    if (!keepOpen)
+    if (!preview_)
         hide();
 }
 void LauncherPanel::deleteItem(int index) {
@@ -731,7 +729,7 @@ void LauncherPanel::updateTabArrows() {
 void LauncherPanel::changeCategory(int direction) {
     const int count = tabs_->count();
     if (count)
-        tabs_->setCurrentIndex((tabs_->currentIndex() + direction + count) % count);
+        tabs_->setCurrentIndex((tabs_->currentIndex() + direction % count + count) % count);
 }
 void LauncherPanel::showSearch(const QString& initial) {
     search_->setText(initial);
@@ -840,10 +838,7 @@ void LauncherPanel::keyPressEvent(QKeyEvent* event) {
         }
     } else if (key == Qt::Key_Return || key == Qt::Key_Enter)
         activateItem(itemAt(selected_));
-    else if (ctrl && key == Qt::Key_Space) {
-        setPinned(!keepOpen);
-        Q_EMIT pinnedChanged(keepOpen);
-    } else if (ctrl && key == Qt::Key_F)
+    else if (ctrl && key == Qt::Key_F)
         showSearch();
     else if (key == Qt::Key_Up || key == Qt::Key_Down || key == Qt::Key_Left ||
              key == Qt::Key_Right) {
@@ -952,6 +947,11 @@ bool LauncherPanel::eventFilter(QObject* watched, QEvent* event) {
                 mime->setData(mimeType, itemAt(index).toUtf8());
                 drag->setMimeData(mime);
                 drag->setPixmap(source->icon().pixmap(32, 32));
+                dragWheel_->start(*windowHandle());
+                const auto stopWheel = qScopeGuard([guard = QPointer<DragWheelRouter>(dragWheel_)] {
+                    if (guard)
+                        guard->stop();
+                });
                 drag->exec(Qt::MoveAction);
                 if (source)
                     source->setDown(false);
@@ -969,20 +969,29 @@ bool LauncherPanel::eventFilter(QObject* watched, QEvent* event) {
     return Panel::eventFilter(watched, event);
 }
 void LauncherPanel::dragEnterEvent(QDragEnterEvent* e) {
+    dragHoverTab_ = -1;
     if (e->mimeData()->hasFormat(mimeType) || e->mimeData()->hasUrls())
         e->acceptProposedAction();
 }
 void LauncherPanel::dragMoveEvent(QDragMoveEvent* e) {
+    dragWheel_->flush();
     const auto point = e->position().toPoint();
     const auto tabPoint = tabs_->mapFrom(this, point);
-    if (tabs_->rect().contains(tabPoint)) {
-        const int tab = tabs_->tabAt(tabPoint);
-        if (tab >= 0)
-            tabs_->setCurrentIndex(tab);
-    }
+    const int tab = tabs_->rect().contains(tabPoint) ? tabs_->tabAt(tabPoint) : -1;
+    // OLE can repeat DragOver at the same position after a wheel. Only entering
+    // a different tab should override the category chosen with the wheel.
+    if (tab >= 0 && tab != dragHoverTab_)
+        tabs_->setCurrentIndex(tab);
+    dragHoverTab_ = tab;
     e->acceptProposedAction();
 }
+void LauncherPanel::dragLeaveEvent(QDragLeaveEvent* e) {
+    dragHoverTab_ = -1;
+    Panel::dragLeaveEvent(e);
+}
 void LauncherPanel::dropEvent(QDropEvent* e) {
+    dragWheel_->flush();
+    dragHoverTab_ = -1;
     clearTilePresses();
     int slot = -1;
     const auto p = e->position().toPoint();
@@ -1036,6 +1045,8 @@ void LauncherPanel::moveEvent(QMoveEvent* e) {
         positionSearch();
 }
 void LauncherPanel::hideEvent(QHideEvent* e) {
+    dragWheel_->stop();
+    dragHoverTab_ = -1;
     hoveredTile_ = -1;
     updateHoverTitle();
     clearTilePresses();
@@ -1049,6 +1060,8 @@ void LauncherPanel::wheelEvent(QWheelEvent* e) {
     e->accept();
 }
 bool LauncherPanel::event(QEvent* e) {
+    if (e->type() == QEvent::WinIdChange && dragWheel_)
+        dragWheel_->stop();
     if (e->type() == QEvent::WindowDeactivate)
         checkFocusLater();
     return Panel::event(e);
@@ -1063,7 +1076,7 @@ void LauncherPanel::checkFocusLater() {
                     return true;
             return false;
         };
-        if (isVisible() && !keepOpen && !owned(QApplication::activeWindow()) &&
+        if (isVisible() && !preview_ && !owned(QApplication::activeWindow()) &&
             !owned(QApplication::activeModalWidget()) && !owned(QApplication::activePopupWidget()))
             hide();
     });
@@ -1074,7 +1087,6 @@ void LauncherPanel::retranslate() {
         button->setAccessibleName(text);
     };
     label(menuButton_, tx(u"启动器菜单"));
-    label(pin_, tx(u"保持打开（Ctrl+Space）"));
     label(closeButton_, tx(u"隐藏启动面板（Esc）"));
     label(tabLeft_, tx(u"向左滚动分类"));
     label(tabRight_, tx(u"向右滚动分类"));

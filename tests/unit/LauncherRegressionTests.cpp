@@ -1,7 +1,10 @@
+#include <windows.h>
+
 #include "infrastructure/i18n/I18n.h"
 #include "infrastructure/storage/HLaunchImport.h"
 #include "modules/launcher/LauncherPanel.h"
 #include "platform/windows/ShellJobs.h"
+#include "platform/windows/DragWheelRouter.h"
 #include "ui/components/Theme.h"
 #include "ui/shell/SettingsDialog.h"
 #include <QApplication>
@@ -87,6 +90,26 @@ void dragTab(QTabBar* tabs, QPoint position) {
                      Qt::LeftButton, {});
     QApplication::sendEvent(tabs, &move);
 }
+LPARAM wheelPosition(QWidget& window, QPoint local) {
+    const auto handle = reinterpret_cast<HWND>(window.winId());
+    RECT client{};
+    GetClientRect(handle, &client);
+    POINT point{MulDiv(local.x(), client.right, window.width()),
+                MulDiv(local.y(), client.bottom, window.height())};
+    ClientToScreen(handle, &point);
+    return MAKELPARAM(point.x, point.y);
+}
+UINT takeWheel(QWidget& window, QPoint local, int delta, UINT message = WM_MOUSEWHEEL,
+               WORD buttons = MK_LBUTTON) {
+    const auto handle = reinterpret_cast<HWND>(window.winId());
+    if (!PostMessageW(handle, message, MAKEWPARAM(buttons, static_cast<WORD>(delta)),
+                      wheelPosition(window, local)))
+        return 0;
+    MSG received{};
+    if (!PeekMessageW(&received, handle, message, message, PM_REMOVE))
+        return 0;
+    return received.message;
+}
 class StyleChanges final : public QObject {
   public:
     int count = 0;
@@ -163,8 +186,7 @@ class LauncherRegressionTests final : public QObject {
         LauncherService service(dir.filePath(QStringLiteral("launcher.json")));
         QVERIFY(service.load());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         panel.showNear({20, 20});
         activateForTest(&panel);
         QTRY_COMPARE(QApplication::focusWidget(), tile(panel, 0));
@@ -198,8 +220,7 @@ class LauncherRegressionTests final : public QObject {
         QVERIFY(service.put(service.catalog().selectedCategory, 5, entry));
         QTRY_VERIFY(!service.busy());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         panel.showNear({20, 20});
         activateForTest(&panel);
         auto* target = tile(panel, 5);
@@ -231,8 +252,7 @@ class LauncherRegressionTests final : public QObject {
         LauncherService service(path);
         QVERIFY(service.load());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         panel.showNear({80, 60});
         activateForTest(&panel);
         key(&panel, Qt::Key_F, Qt::ControlModifier);
@@ -288,8 +308,7 @@ class LauncherRegressionTests final : public QObject {
         LauncherService service(dir.filePath(QStringLiteral("launcher.json")));
         QVERIFY(service.load());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         panel.showNear({80, 60});
         activateForTest(&panel);
         auto* target = tile(panel, 1);
@@ -332,8 +351,7 @@ class LauncherRegressionTests final : public QObject {
         LauncherService service(path);
         QVERIFY(service.load());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         panel.showNear({20, 20});
         activateForTest(&panel);
         QSignalSpy launches(&panel, &LauncherPanel::launchRequested);
@@ -369,8 +387,7 @@ class LauncherRegressionTests final : public QObject {
         LauncherService service(path);
         QVERIFY(service.load());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         panel.showNear({20, 20});
         QTest::qWait(30);
         auto* tabs = panel.findChild<QTabBar*>();
@@ -414,8 +431,7 @@ class LauncherRegressionTests final : public QObject {
         });
         QVERIFY(service.load());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         panel.showNear({20, 20});
         QTest::qWait(30);
         auto* tabs = panel.findChild<QTabBar*>();
@@ -464,8 +480,7 @@ class LauncherRegressionTests final : public QObject {
         LauncherService service(dir.filePath(QStringLiteral("launcher.json")));
         QVERIFY(service.load());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         panel.showNear({20, 20});
         QTest::qWait(30);
         auto* tabs = panel.findChild<QTabBar*>();
@@ -498,8 +513,7 @@ class LauncherRegressionTests final : public QObject {
         LauncherService service(path);
         QVERIFY(service.load());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         panel.showNear({20, 20});
         auto* tabs = panel.findChild<QTabBar*>();
         auto* right = tabs->findChild<QToolButton*>(QStringLiteral("ScrollRightButton"));
@@ -521,8 +535,7 @@ class LauncherRegressionTests final : public QObject {
         LauncherService service(path);
         QVERIFY(service.load());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         panel.showNear({20, 20});
         activateForTest(&panel);
         tile(panel, 0)->setFocus();
@@ -566,8 +579,7 @@ class LauncherRegressionTests final : public QObject {
         LauncherService service(path);
         QVERIFY(service.load());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         panel.showNear({20, 20});
         activateForTest(&panel);
         tile(panel, 0)->setFocus();
@@ -594,8 +606,7 @@ class LauncherRegressionTests final : public QObject {
         LauncherService service(dir.filePath(QStringLiteral("launcher.json")));
         QVERIFY(service.load());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         panel.setGrid(20, 20);
         panel.showNear({20, 20});
         panel.fitToWorkArea(QRect(0, 0, 600, 500));
@@ -629,9 +640,8 @@ class LauncherRegressionTests final : public QObject {
         QVERIFY(service.load());
         Theme theme;
         theme.apply(QStringLiteral("dark"));
-        LauncherPanel panel(theme, service);
+        LauncherPanel panel(theme, service, true);
         panel.setGrid(20, 20);
-        panel.setPinned(true);
         panel.showNear({20, 20});
         QTest::qWait(30);
         StyleChanges changes;
@@ -660,11 +670,10 @@ class LauncherRegressionTests final : public QObject {
         QTRY_VERIFY(!service.busy());
         Theme theme;
         theme.apply(mode);
-        LauncherPanel panel(theme, service);
+        LauncherPanel panel(theme, service, true);
         // This test sends synthetic Enter/Leave events. Keep the native desktop
         // from injecting a competing Leave while an asynchronous save is pending.
         panel.setAttribute(Qt::WA_DontShowOnScreen);
-        panel.setPinned(true);
         panel.showNear({20, 20});
         activateForTest(&panel);
         QTest::qWait(30);
@@ -729,8 +738,7 @@ class LauncherRegressionTests final : public QObject {
         LauncherService service(dir.filePath(QStringLiteral("launcher.json")));
         QVERIFY(service.load());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         panel.setGrid(3, 3);
         panel.showNear({20, 20});
         activateForTest(&panel);
@@ -818,8 +826,7 @@ class LauncherRegressionTests final : public QObject {
         LauncherService service(path);
         QVERIFY(service.load());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         QSignalSpy requests(&panel, &LauncherPanel::iconRequested);
         panel.showNear({20, 20});
         QTRY_COMPARE(requests.size(), 2);
@@ -853,8 +860,7 @@ class LauncherRegressionTests final : public QObject {
         LauncherService service(path);
         QVERIFY(service.load());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         panel.showNear({20, 20});
         activateForTest(&panel);
         QTest::qWait(30);
@@ -883,6 +889,132 @@ class LauncherRegressionTests final : public QObject {
         QCOMPARE(launches.size(), 1);
         QCOMPARE(qvariant_cast<LaunchItem>(launches[0][0]).id, a.id);
     }
+    void dragWheelSwitchesCategoryBeforeImmediateDrop_data() {
+        QTest::addColumn<int>("delta");
+        QTest::addColumn<int>("destination");
+        QTest::newRow("previous") << 120 << 1;
+        QTest::newRow("next") << -120 << 3;
+        QTest::newRow("wrap forward") << -240 << 0;
+        QTest::newRow("wrap backward multiple turns") << 840 << 3;
+    }
+    void dragWheelSwitchesCategoryBeforeImmediateDrop() {
+        QFETCH(int, delta);
+        QFETCH(int, destination);
+        QTemporaryDir dir;
+        auto catalog = LauncherCatalog::empty();
+        const auto entry = item(QStringLiteral("wheel drag"));
+        QVERIFY(catalog.put(2, 0, entry));
+        const auto path = dir.filePath(QStringLiteral("launcher.json"));
+        QVERIFY(catalog.save(path));
+        LauncherService service(path);
+        QVERIFY(service.load());
+        Theme theme;
+        LauncherPanel panel(theme, service, true);
+        panel.showNear({20, 20});
+        QTest::qWait(20);
+        auto* tabs = panel.findChild<QTabBar*>();
+        auto* router = panel.findChild<DragWheelRouter*>();
+        QVERIFY(tabs && router);
+        QCOMPARE(tabs->currentIndex(), 2);
+        QVERIFY(router->start(*panel.windowHandle()));
+        QSignalSpy launches(&panel, &LauncherPanel::launchRequested);
+        auto* target = tile(panel, 3);
+        const auto point = target->mapTo(&panel, target->rect().center());
+        QMimeData mime;
+        mime.setData(QStringLiteral("application/x-mt-launch-item"), entry.id.toUtf8());
+        QDragEnterEvent enter(point, Qt::MoveAction, &mime, Qt::LeftButton, {});
+        QApplication::sendEvent(&panel, &enter);
+        QCOMPARE(takeWheel(panel, point, delta), UINT(WM_NULL));
+        // The native callback must not refresh the UI or perform persistence.
+        QCOMPARE(tabs->currentIndex(), 2);
+        QDropEvent drop(point, Qt::MoveAction, &mime, Qt::LeftButton, {});
+        QApplication::sendEvent(&panel, &drop);
+        QVERIFY(drop.isAccepted());
+        QCOMPARE(tabs->currentIndex(), destination);
+        router->stop();
+        QTRY_VERIFY(!service.busy());
+        QCOMPARE(service.catalog().selectedCategory, catalog.categories[destination].id);
+        QCOMPARE(service.catalog().categories[destination].slots[3], entry.id);
+        QVERIFY(service.catalog().categories[2].slots[0].isEmpty());
+        QCOMPARE(launches.size(), 0);
+        QVERIFY(!tile(panel, 0)->isDown());
+        QVERIFY(!target->isDown());
+    }
+    void dragWheelNativeRoutingAndCleanup() {
+        QTemporaryDir dir;
+        LauncherService service(dir.filePath(QStringLiteral("launcher.json")));
+        QVERIFY(service.load());
+        Theme theme;
+        LauncherPanel panel(theme, service, true);
+        panel.showNear({20, 20});
+        QTest::qWait(20);
+        auto* tabs = panel.findChild<QTabBar*>();
+        auto* router = panel.findChild<DragWheelRouter*>();
+        QVERIFY(tabs && router);
+        const auto point = tile(panel, 0)->mapTo(&panel, QPoint(20, 20));
+        const auto handle = reinterpret_cast<HWND>(panel.winId());
+        const int original = tabs->currentIndex();
+        QCOMPARE(takeWheel(panel, point, 120), UINT(WM_MOUSEWHEEL));
+        QVERIFY(router->start(*panel.windowHandle()));
+        QVERIFY(PostMessageW(handle, WM_MOUSEWHEEL, MAKEWPARAM(MK_LBUTTON, 60),
+                             wheelPosition(panel, point)));
+        MSG received{};
+        for (int i = 0; i < 2; ++i) {
+            QVERIFY(PeekMessageW(&received, handle, WM_MOUSEWHEEL, WM_MOUSEWHEEL, PM_NOREMOVE));
+            QCOMPARE(received.message, UINT(WM_MOUSEWHEEL));
+        }
+        QVERIFY(PeekMessageW(&received, handle, WM_MOUSEWHEEL, WM_MOUSEWHEEL, PM_REMOVE));
+        QCOMPARE(received.message, UINT(WM_NULL));
+        router->flush();
+        QCOMPARE(tabs->currentIndex(), original);
+        QCOMPARE(takeWheel(panel, point, 60), UINT(WM_NULL));
+        QTRY_COMPARE(tabs->currentIndex(), original - 1);
+        QCOMPARE(takeWheel(panel, point, 120, WM_MOUSEHWHEEL), UINT(WM_MOUSEHWHEEL));
+        QCOMPARE(takeWheel(panel, point, 120, WM_MOUSEWHEEL, 0), UINT(WM_MOUSEWHEEL));
+        QCOMPARE(takeWheel(panel, {-30, -30}, 120), UINT(WM_MOUSEWHEEL));
+        router->flush();
+        QCOMPARE(tabs->currentIndex(), original - 1);
+        QCOMPARE(takeWheel(panel, point, -120), UINT(WM_NULL));
+        router->stop(); // A queued delivery from a cancelled drag must be discarded.
+        QTest::qWait(20);
+        QCOMPARE(tabs->currentIndex(), original - 1);
+        QCOMPARE(takeWheel(panel, point, 120), UINT(WM_MOUSEWHEEL));
+        QVERIFY(router->start(*panel.windowHandle()));
+        QCOMPARE(takeWheel(panel, point, -120), UINT(WM_NULL));
+        panel.hide();
+        QTest::qWait(20);
+        QCOMPARE(tabs->currentIndex(), original - 1);
+        panel.show();
+        QCOMPARE(takeWheel(panel, point, 120), UINT(WM_MOUSEWHEEL));
+    }
+    void dragWheelSelectionSurvivesRepeatedTabHover() {
+        QTemporaryDir dir;
+        LauncherService service(dir.filePath(QStringLiteral("launcher.json")));
+        QVERIFY(service.load());
+        Theme theme;
+        LauncherPanel panel(theme, service, true);
+        panel.showNear({20, 20});
+        QTest::qWait(20);
+        auto* tabs = panel.findChild<QTabBar*>();
+        auto* router = panel.findChild<DragWheelRouter*>();
+        QVERIFY(router->start(*panel.windowHandle()));
+        const auto point = tabs->mapTo(&panel, tabs->tabRect(1).center());
+        QMimeData mime;
+        mime.setData(QStringLiteral("application/x-mt-launch-item"), "test");
+        QDragEnterEvent enter(point, Qt::MoveAction, &mime, Qt::LeftButton, {});
+        QApplication::sendEvent(&panel, &enter);
+        QDragMoveEvent move(point, Qt::MoveAction, &mime, Qt::LeftButton, {});
+        QApplication::sendEvent(&panel, &move);
+        QCOMPARE(tabs->currentIndex(), 1);
+        QCOMPARE(takeWheel(panel, point, -120), UINT(WM_NULL));
+        QApplication::sendEvent(&panel, &move);
+        QCOMPARE(tabs->currentIndex(), 2);
+        const auto other = tabs->mapTo(&panel, tabs->tabRect(0).center());
+        QDragMoveEvent moved(other, Qt::MoveAction, &mime, Qt::LeftButton, {});
+        QApplication::sendEvent(&panel, &moved);
+        QCOMPARE(tabs->currentIndex(), 0);
+        router->stop();
+    }
     void searchShortcutRecoversFromNoMatches_data() {
         QTest::addColumn<QString>("mode");
         QTest::newRow("dark") << QStringLiteral("dark");
@@ -898,8 +1030,7 @@ class LauncherRegressionTests final : public QObject {
         QTRY_VERIFY(service.catalog().items.contains(alpha.id));
         Theme theme;
         theme.apply(mode);
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         panel.showNear({20, 20});
         activateForTest(&panel);
         QSignalSpy launched(&panel, &LauncherPanel::launchRequested);
@@ -961,6 +1092,8 @@ class LauncherRegressionTests final : public QObject {
         LauncherPanel panel(theme, service);
         panel.showNear({20, 20});
         activateForTest(&panel);
+        // The removed shortcut must not restore persistent display.
+        key(&panel, Qt::Key_Space, Qt::ControlModifier);
         key(&panel, Qt::Key_F, Qt::ControlModifier);
         auto* popup = panel.findChild<QLineEdit*>()->window();
         QVERIFY(popup->isVisible());
@@ -978,40 +1111,49 @@ class LauncherRegressionTests final : public QObject {
         QApplication::sendEvent(popup, &loss);
         QTRY_VERIFY(!panel.isVisible());
         QVERIFY(!popup->isVisible());
-        panel.setPinned(true);
-        panel.showNear({20, 20});
-        key(&panel, Qt::Key_F, Qt::ControlModifier);
-        activateForTest(&external);
-        QApplication::sendEvent(popup, &loss);
-        QTest::qWait(150);
-        QVERIFY(panel.isVisible());
     }
-    void visiblePinnedPanelRetainsChineseLabels() {
+    void visiblePanelRetainsChineseLabels() {
         QTemporaryDir dir;
         LauncherService service(dir.filePath(QStringLiteral("launcher.json")));
         QVERIFY(service.load());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         panel.showNear({20, 20});
         panel.retranslate();
         QCOMPARE(panel.findChild<QLineEdit*>()->placeholderText(), tx(u"搜索所有分类"));
-        bool translated = false;
-        for (auto* button : panel.findChildren<QToolButton*>())
-            translated |= button->accessibleName() == tx(u"保持打开（Ctrl+Space）");
-        QVERIFY(translated);
+        const auto actions = panel.findChildren<QToolButton*>(QStringLiteral("LauncherHeaderAction"));
+        QCOMPARE(actions.size(), 2);
+        QCOMPARE(actions[0]->accessibleName(), tx(u"启动器菜单"));
+        QCOMPARE(actions[1]->accessibleName(), tx(u"隐藏启动面板（Esc）"));
         QVERIFY(panel.isVisible());
         panel.hide();
         panel.showNear({20, 20});
         QCOMPARE(panel.findChild<QLineEdit*>()->placeholderText(), tx(u"搜索所有分类"));
+    }
+    void removedPinShortcutCannotPreventHideAfterLaunch() {
+        QTemporaryDir dir;
+        LauncherService service(dir.filePath(QStringLiteral("launcher.json")));
+        QVERIFY(service.load());
+        const auto entry = item(QStringLiteral("launch and hide"));
+        QVERIFY(service.put(service.catalog().selectedCategory, 0, entry));
+        QTRY_VERIFY(!service.busy());
+        Theme theme;
+        LauncherPanel panel(theme, service);
+        panel.showNear({20, 20});
+        activateForTest(&panel);
+        QSignalSpy launches(&panel, &LauncherPanel::launchRequested);
+        key(&panel, Qt::Key_Space, Qt::ControlModifier);
+        QVERIFY(panel.isVisible());
+        key(&panel, Qt::Key_Return);
+        QCOMPARE(launches.size(), 1);
+        QVERIFY(!panel.isVisible());
     }
     void oversizedGridKeepsCategoriesReachable() {
         QTemporaryDir dir;
         LauncherService service(dir.filePath(QStringLiteral("launcher.json")));
         QVERIFY(service.load());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         panel.setGrid(20, 20);
         panel.showNear({20, 20});
         key(&panel, Qt::Key_F, Qt::ControlModifier);
@@ -1390,8 +1532,7 @@ class LauncherRegressionTests final : public QObject {
         QVERIFY(catalog.save(path));
         LauncherService service(path); QVERIFY(service.load());
         Theme theme;
-        LauncherPanel panel(theme, service);
-        panel.setPinned(true);
+        LauncherPanel panel(theme, service, true);
         QSignalSpy requests(&panel, &LauncherPanel::iconRequested);
         panel.showNear({20, 20});
         QTest::qWait(20);
