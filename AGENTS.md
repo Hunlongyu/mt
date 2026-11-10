@@ -6,7 +6,7 @@
 
 ## 产品与技术约束
 
-- 品牌显示为 **MT**，启动面板不显示 HLaunch；程序名 `mt.exe`，命名空间、资源前缀、CMake 目标和技术标识为小写 `mt`。组织名为 `dev.hly.com`，默认数据根为 `%LOCALAPPDATA%\dev.hly.com\mt`，AppUserModelID 仍待定。新根不存在时兼容使用旧开发根；显式 `--data-dir` 保持优先。
+- 品牌显示为 **MT**，启动面板不显示 HLaunch；程序名 `mt.exe`，命名空间、资源前缀、CMake 目标和技术标识为小写 `mt`。组织名为 `dev.hly.com`，AppUserModelID 仍待定。数据根优先级为显式 `--data-dir`、EXE 同级存在 `settings.json` 时的便携目录、`%LOCALAPPDATA%\dev.hly.com\mt`；新 AppData 根不存在时兼容旧开发根。同级配置损坏不得回退或覆盖；缺少配置时保存默认配置，数据库也使用选定目录。预览默认使用 AppData 下的独立 `preview`，不自动读取便携配置。
 - 正式产品 Logo 是 `resources/logo.ico`，用于 EXE、应用窗口和托盘；透明源图为 `resources/logo.png`，仅保留黑色圆角图形与内部 MT 字样，外围透明，不带白色底板。功能图标使用 Lucide（ISC），缺少合适图标时才选 Tabler（MIT），不手绘来源不明图标。
 - 自有业务代码全新使用 C++23；CMake 构建，FetchContent 管理需获取的源码依赖。第三方 C 库可保留，不重写 SQLite。
 - 使用 Qt 6 Widgets、布局和统一 QSS，不使用 QML、WinUI、WebView 或动态业务插件平台。不得用 Qt 宿主包装旧整页自绘 UI。

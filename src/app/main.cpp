@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
     parser.addOption(updateComplete);
     parser.addVersionOption();
     parser.addOption({QStringLiteral("data-dir"),
-                      QStringLiteral("独立开发数据目录"),
+                      QStringLiteral("指定数据目录，优先于程序同级配置和默认目录"),
                       QStringLiteral("path")});
     parser.addOption(
         {QStringLiteral("preview"),
@@ -76,18 +76,12 @@ int main(int argc, char** argv) {
     if (parser.isSet(QStringLiteral("shell-helper")))
         return mt::DesktopServices::runShellHelper();
     const bool preview = parser.isSet(QStringLiteral("preview"));
-    auto root = parser.value(QStringLiteral("data-dir"));
-    if (root.isEmpty()) {
-        root = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
-        if (preview)
-            root = QDir(root).filePath(QStringLiteral("preview"));
-        else {
-            const auto legacy = QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation))
-                                    .filePath(QStringLiteral("HunlongyuDevelopment/mt"));
-            root = mt::compatibleDefaultDataRoot(root, legacy);
-        }
-    }
-    root = QDir::cleanPath(QFileInfo(root).absoluteFilePath());
+    const auto root = mt::resolveDataRoot(
+        parser.value(QStringLiteral("data-dir")), QCoreApplication::applicationDirPath(),
+        QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation),
+        QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation))
+            .filePath(QStringLiteral("HunlongyuDevelopment/mt")),
+        preview);
     mt::DesktopServices desktop(root.toCaseFolded());
     if (!desktop.valid()) {
         QMessageBox::critical(nullptr, QStringLiteral("MT"),

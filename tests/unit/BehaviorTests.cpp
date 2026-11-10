@@ -32,6 +32,141 @@ using namespace mt;
 class BehaviorTests final : public QObject {
     Q_OBJECT
   private Q_SLOTS:
+    void dataRootSelectionHonorsPortableAndExplicitProfiles() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const auto executable = dir.filePath(QStringLiteral("U盘 程序"));
+        const auto preferred = dir.filePath(QStringLiteral("AppData/dev.hly.com/mt"));
+        const auto legacy = dir.filePath(QStringLiteral("AppData/HunlongyuDevelopment/mt"));
+        const auto explicitRoot = dir.filePath(QStringLiteral("指定数据"));
+        const auto previewRoot = QDir(preferred).filePath(QStringLiteral("preview"));
+        const auto select = [&](const QString& requested = {}, bool preview = false) {
+            return resolveDataRoot(requested, executable, preferred, legacy, preview);
+        };
+        QCOMPARE(select(), preferred);
+        QVERIFY(!QFileInfo::exists(preferred)); // Selection alone must not create data.
+        QVERIFY(SettingsStore(legacy).save(Settings::defaults()));
+        QCOMPARE(select(), legacy);
+        QVERIFY(SettingsStore(preferred).save(Settings::defaults()));
+        QCOMPARE(select(), preferred);
+        QVERIFY(QDir().mkpath(executable));
+        // A directory or a leftover database alone does not opt in to portability.
+        QFile database(QDir(executable).filePath(QStringLiteral("clipboard.sqlite")));
+        QVERIFY(database.open(QIODevice::WriteOnly));
+        database.close();
+        QCOMPARE(select(), preferred);
+        QVERIFY(SettingsStore(executable).save(Settings::defaults()));
+        QCOMPARE(select(), executable);
+        QCOMPARE(select(explicitRoot), explicitRoot);
+        QCOMPARE(select({}, true), previewRoot);
+        QCOMPARE(select(explicitRoot, true), explicitRoot);
+        QCOMPARE(select(QStringLiteral("relative-profile/../relative-profile")),
+                 QDir::current().filePath(QStringLiteral("relative-profile")));
+        QVERIFY(!QFileInfo::exists(explicitRoot));
+        QVERIFY(!QFileInfo::exists(previewRoot));
+    }
+    void portableProfileMovesWithExecutableDirectory() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const auto executable = dir.filePath(QStringLiteral("原 U盘/MT"));
+        const auto moved = dir.filePath(QStringLiteral("新 U盘/MT"));
+        const auto preferred = dir.filePath(QStringLiteral("AppData/mt"));
+        const auto legacy = dir.filePath(QStringLiteral("AppData/legacy"));
+        QVERIFY(QDir().mkpath(executable));
+        QFile marker(QDir(executable).filePath(QStringLiteral("settings.json")));
+        QVERIFY(marker.open(QIODevice::WriteOnly));
+        QVERIFY(marker.write(R"({"schema":1,"theme":"light"})") > 0);
+        marker.close();
+        const auto root = resolveDataRoot({}, executable, preferred, legacy);
+        QCOMPARE(root, executable);
+        SettingsStore settings(root);
+        auto loaded = settings.load();
+        QVERIFY(loaded);
+        QCOMPARE(loaded->theme, QStringLiteral("light"));
+        loaded->historyLimit = 123;
+        QVERIFY(settings.save(*loaded));
+        auto catalog = LauncherCatalog::empty();
+        QVERIFY(catalog.setColumns(7));
+        QVERIFY(catalog.save(QDir(root).filePath(QStringLiteral("launcher.json"))));
+        {
+            ClipboardStore clips(QDir(root).filePath(QStringLiteral("clipboard.sqlite")));
+            QVERIFY(clips.open());
+            ClipboardRecord record;
+            record.text = QStringLiteral("便携历史");
+            record.finalize();
+            QVERIFY(clips.capture(record, 10));
+        }
+        QVERIFY(QDir().mkpath(QFileInfo(moved).absolutePath()));
+        QVERIFY(QDir().rename(executable, moved));
+        const auto movedRoot = resolveDataRoot({}, moved, preferred, legacy);
+        QCOMPARE(movedRoot, moved);
+        const auto restored = SettingsStore(movedRoot).load();
+        QVERIFY(restored);
+        QCOMPARE(restored->theme, QStringLiteral("light"));
+        QCOMPARE(restored->historyLimit, 123);
+        const auto restoredCatalog = LauncherCatalog::load(
+            QDir(movedRoot).filePath(QStringLiteral("launcher.json")));
+        QVERIFY(restoredCatalog);
+        QCOMPARE(restoredCatalog->columns, 7);
+        ClipboardStore restoredClips(QDir(movedRoot).filePath(QStringLiteral("clipboard.sqlite")));
+        QVERIFY(restoredClips.open());
+        const auto records = restoredClips.records();
+        QVERIFY(records);
+        QCOMPARE(records->size(), 1);
+        QCOMPARE(records->front().text, QStringLiteral("便携历史"));
+        QVERIFY(!QFileInfo::exists(preferred));
+        QVERIFY(!QFileInfo::exists(legacy));
+    }
+    void invalidPortableSettingsNeverFallBackToAppData() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const auto executable = dir.filePath(QStringLiteral("portable"));
+        const auto preferred = dir.filePath(QStringLiteral("AppData/mt"));
+        const auto legacy = dir.filePath(QStringLiteral("AppData/legacy"));
+        QVERIFY(SettingsStore(preferred).save(Settings::defaults()));
+        QVERIFY(QDir().mkpath(executable));
+        QFile marker(QDir(executable).filePath(QStringLiteral("settings.json")));
+        QVERIFY(marker.open(QIODevice::WriteOnly));
+        const QByteArray broken("{incomplete");
+        QCOMPARE(marker.write(broken), broken.size());
+        marker.close();
+        const auto root = resolveDataRoot({}, executable, preferred, legacy);
+        QCOMPARE(root, executable);
+        SettingsStore selected(root);
+        QVERIFY(!selected.load());
+        QVERIFY(!selected.save(Settings::defaults()));
+        QVERIFY(marker.open(QIODevice::ReadOnly));
+        QCOMPARE(marker.readAll(), broken);
+        marker.close();
+        // An unusable settings destination must fail, too, without switching profiles.
+        QVERIFY(marker.remove());
+        QVERIFY(QDir().mkdir(marker.fileName()));
+        QCOMPARE(resolveDataRoot({}, executable, preferred, legacy), executable);
+        QVERIFY(!SettingsStore(executable).load());
+    }
+    void firstLoadPersistsDefaultsAndReportsCreationFailure() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const auto preferred = dir.filePath(QStringLiteral("AppData/mt"));
+        const auto root = resolveDataRoot({}, dir.filePath(QStringLiteral("bin")), preferred,
+                                          dir.filePath(QStringLiteral("legacy")));
+        QCOMPARE(root, preferred);
+        const auto loaded = SettingsStore(root).load();
+        QVERIFY(loaded);
+        QFile settings(QDir(root).filePath(QStringLiteral("settings.json")));
+        QVERIFY(settings.open(QIODevice::ReadOnly));
+        const auto persisted = Settings::decode(settings.readAll());
+        QVERIFY(persisted);
+        QCOMPARE(persisted->encode(), Settings::defaults().encode());
+        ClipboardStore clips(QDir(root).filePath(QStringLiteral("clipboard.sqlite")));
+        QVERIFY(clips.open());
+        QVERIFY(QFileInfo::exists(QDir(root).filePath(QStringLiteral("clipboard.sqlite"))));
+        // A file blocking the data directory must not look like a successful first run.
+        QFile blocked(dir.filePath(QStringLiteral("blocked")));
+        QVERIFY(blocked.open(QIODevice::WriteOnly));
+        blocked.close();
+        QVERIFY(!SettingsStore(blocked.fileName() + QStringLiteral("/mt")).load());
+    }
     void organizationRenamePreservesExistingDataRoot() {
         QTemporaryDir dir;
         QVERIFY(dir.isValid());

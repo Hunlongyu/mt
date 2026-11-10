@@ -20,6 +20,20 @@ QString compatibleDefaultDataRoot(const QString& preferredRoot, const QString& l
         return preferredRoot;
     return legacyRoot;
 }
+QString resolveDataRoot(const QString& requestedRoot, const QString& executableDirectory,
+                        const QString& preferredRoot, const QString& legacyRoot, bool preview) {
+    QString root = requestedRoot;
+    if (root.isEmpty()) {
+        if (preview)
+            root = QDir(preferredRoot).filePath(QStringLiteral("preview"));
+        else if (!executableDirectory.isEmpty() &&
+                 QFileInfo::exists(QDir(executableDirectory).filePath(QStringLiteral("settings.json"))))
+            root = executableDirectory;
+        else
+            root = compatibleDefaultDataRoot(preferredRoot, legacyRoot);
+    }
+    return QDir::cleanPath(QFileInfo(root).absoluteFilePath());
+}
 Settings Settings::defaults() {
     Settings s;
     s.gestureActions = {{QStringLiteral("1"), QStringLiteral("cmd:minimize")},
@@ -301,8 +315,12 @@ std::expected<Settings, QString> SettingsStore::load() {
         return std::unexpected(result.error());
     }
     QFile f(QDir(root_).filePath(QStringLiteral("settings.json")));
-    if (!f.exists())
-        return Settings::defaults();
+    if (!f.exists()) {
+        auto defaults = Settings::defaults();
+        if (auto saved = save(defaults); !saved)
+            return std::unexpected(saved.error());
+        return defaults;
+    }
     if (!f.open(QIODevice::ReadOnly)) {
         writable_ = false;
         return std::unexpected(f.errorString());

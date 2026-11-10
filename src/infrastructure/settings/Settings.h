@@ -7,6 +7,11 @@ namespace mt {
 // Preserve existing installations when the organization-derived default changes.
 // This only selects a root; it never copies, merges or rewrites user data.
 QString compatibleDefaultDataRoot(const QString& preferredRoot, const QString& legacyRoot);
+// Explicit paths win. Preview stays isolated; ordinary runs prefer settings.json
+// beside the executable before selecting the compatible AppData root.
+QString resolveDataRoot(const QString& requestedRoot, const QString& executableDirectory,
+                        const QString& preferredRoot, const QString& legacyRoot,
+                        bool preview = false);
 class LauncherCatalog;
 struct Settings {
     QString theme = QStringLiteral("dark"); // dark | light | auto (follow Windows)

@@ -91,7 +91,11 @@
 
 **软件更新**：进入“设置 → 关于 MT”检查和下载更新，确认后安装并重启。后台也会检查正式版本，预发布版不进入自动更新通道。
 
-**数据保存**：新安装默认使用 `%LOCALAPPDATA%\dev.hly.com\mt`，数据独立于 EXE。若新目录尚不存在，而旧目录 `%LOCALAPPDATA%\HunlongyuDevelopment\mt` 已有数据，则继续使用旧目录。需要自定义目录时运行：
+**数据保存与便携模式**：启动时优先使用显式 `--data-dir`；未指定时，若 `mt.exe` 同级存在 `settings.json`，配置、启动项和剪贴板数据库都使用该目录。否则使用 `%LOCALAPPDATA%\dev.hly.com\mt`；若此目录尚不存在而旧目录 `%LOCALAPPDATA%\HunlongyuDevelopment\mt` 存在，则继续使用旧目录。首次运行会在选定目录创建默认配置与数据库。
+
+放到 U 盘使用时，先退出 MT，再把现有数据目录中的全部内容复制到 `mt.exe` 同级，随后直接运行即可。若想从全新配置开始，在程序同级新建 UTF-8 文件 `settings.json`，内容为 `{"schema":1}`。仅复制 EXE 不会启用便携模式；已有同级配置损坏或不可读时会报错，不会悄悄改用 AppData。
+
+需要自定义目录时运行：
 
 ```powershell
 ./mt.exe --data-dir D:/MT-data
