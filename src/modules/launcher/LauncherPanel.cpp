@@ -733,15 +733,17 @@ void LauncherPanel::changeCategory(int direction) {
 }
 void LauncherPanel::showSearch(const QString& initial) {
     search_->setText(initial);
+    // Prepare the destination screen, size and position while still hidden.
+    // Mapping at the previous screen first applies its stale DPI size limits.
+    updateSearch();
     searchPopup_->show();
-    positionSearch();
     searchPopup_->activateWindow();
     search_->setFocus();
-    updateSearch();
 }
 void LauncherPanel::positionSearch() {
     auto point = pos() + QPoint(0, height() + 6);
     if (auto* currentScreen = screen()) {
+        searchPopup_->setScreen(currentScreen);
         const auto area = currentScreen->availableGeometry();
         if (point.y() + searchPopup_->height() > area.bottom() + 1)
             point.setY(pos().y() - searchPopup_->height() - 6);

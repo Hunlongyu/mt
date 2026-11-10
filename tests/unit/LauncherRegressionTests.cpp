@@ -37,6 +37,7 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QToolButton>
+#include <QWindow>
 #include <QtPlugin>
 #include <QtTest>
 #include <algorithm>
@@ -68,6 +69,12 @@ QToolButton* tile(LauncherPanel& panel, int slot) {
         if (button->property("slot").isValid() && button->property("slot").toInt() == slot)
             return button;
     return nullptr;
+}
+QSize nativeClientSize(QWidget& widget) {
+    RECT rect{};
+    if (!GetClientRect(reinterpret_cast<HWND>(widget.winId()), &rect))
+        return {};
+    return {rect.right - rect.left, rect.bottom - rect.top};
 }
 void key(QWidget* target, int code, Qt::KeyboardModifiers modifiers = {}) {
     QKeyEvent event(QEvent::KeyPress, code, modifiers);
@@ -1147,6 +1154,79 @@ class LauncherRegressionTests final : public QObject {
         key(&panel, Qt::Key_Return);
         QCOMPARE(launches.size(), 1);
         QVERIFY(!panel.isVisible());
+    }
+    void mixedDpiScreensKeepNativePanelSize_data() {
+        QTest::addColumn<int>("from");
+        QTest::addColumn<int>("to");
+        QTest::addColumn<bool>("centered");
+        const auto screens = QGuiApplication::screens();
+        bool mixed = false;
+        for (int from = 0; from < screens.size(); ++from)
+            for (int to = 0; to < screens.size(); ++to) {
+                if (from == to || qFuzzyCompare(screens[from]->devicePixelRatio(),
+                                               screens[to]->devicePixelRatio()))
+                    continue;
+                mixed = true;
+                for (const bool centered : {false, true})
+                    QTest::newRow(qPrintable(QStringLiteral("%1-to-%2-%3")
+                        .arg(from).arg(to).arg(centered ? "centered" : "near")))
+                        << from << to << centered;
+            }
+        // Keep this test runnable on single-monitor CI hosts as well.
+        if (!mixed)
+            QTest::newRow("no-mixed-dpi-screens") << 0 << 0 << true;
+    }
+    void mixedDpiScreensKeepNativePanelSize() {
+        QFETCH(int, from);
+        QFETCH(int, to);
+        QFETCH(bool, centered);
+        if (from == to)
+            QSKIP("Requires two attached screens with different scale factors");
+        const auto screens = QGuiApplication::screens();
+        QTemporaryDir dir;
+        LauncherService service(dir.filePath(QStringLiteral("launcher.json")));
+        QVERIFY(service.load());
+        Theme theme;
+        theme.apply(QStringLiteral("dark"));
+        LauncherPanel panel(theme, service, true);
+        for (const int screenIndex : {from, to, from, to}) {
+            auto* target = screens[screenIndex];
+            panel.hide();
+            const auto area = target->availableGeometry();
+            if (centered)
+                panel.showCentered(area.center(), false);
+            else
+                panel.showNear(area.topLeft() + QPoint(20, 20), false);
+            QTest::qWait(40);
+            const auto expected = QSize(318, 532).boundedTo(area.size());
+            const QSize physical(qRound(expected.width() * target->devicePixelRatio()),
+                                 qRound(expected.height() * target->devicePixelRatio()));
+            const auto evidence = qEnvironmentVariable("MT_LAUNCHER_DPI_EVIDENCE");
+            if (!evidence.isEmpty()) {
+                qInfo() << target->name() << area << "dpr" << target->devicePixelRatio()
+                        << "widget" << panel.geometry() << "window" << panel.windowHandle()->geometry()
+                        << "native" << nativeClientSize(panel) << "expected" << physical;
+                QVERIFY(QDir().mkpath(evidence));
+                QVERIFY(target->grabWindow(panel.winId()).save(QDir(evidence).filePath(
+                    QStringLiteral("%1-screen-%2.png").arg(QString::fromLatin1(QTest::currentDataTag()))
+                        .arg(screenIndex))));
+            }
+            QCOMPARE(panel.screen(), target);
+            QCOMPARE(panel.size(), expected);
+            QCOMPARE(panel.windowHandle()->size(), expected);
+            QCOMPARE(nativeClientSize(panel), physical);
+            QVERIFY(area.contains(panel.geometry()));
+            auto* tabs = panel.findChild<QTabBar*>();
+            QVERIFY(panel.rect().contains(QRect(tabs->mapTo(&panel, QPoint{}), tabs->size())));
+            QCOMPARE(tile(panel, 27)->size(), QSize(72, 62));
+            key(&panel, Qt::Key_F, Qt::ControlModifier);
+            auto* searchPopup = panel.findChild<QLineEdit*>()->window();
+            QTest::qWait(20);
+            QCOMPARE(searchPopup->screen(), target);
+            QCOMPARE(searchPopup->windowHandle()->size(), searchPopup->size());
+            QCOMPARE(nativeClientSize(*searchPopup), searchPopup->size() * target->devicePixelRatio());
+            QVERIFY(area.contains(searchPopup->geometry()));
+        }
     }
     void oversizedGridKeepsCategoriesReachable() {
         QTemporaryDir dir;

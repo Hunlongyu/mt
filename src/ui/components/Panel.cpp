@@ -83,6 +83,10 @@ void Panel::showNear(QPoint anchor, bool activate) {
     if (!screen)
         screen = QGuiApplication::primaryScreen();
     if (screen) {
+        // A hidden QWidget only records move() locally. Select the destination
+        // before show() maps its native window, or a mixed-DPI move can retain
+        // the previous screen's physical size while the contents use the new DPI.
+        setScreen(screen);
         const auto available = screen->availableGeometry();
         anchor.setX(qBound(available.left(), anchor.x(),
                            qMax(available.left(), available.right() - width() + 1)));
