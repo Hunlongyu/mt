@@ -13,7 +13,7 @@ class GestureActions final {
     GestureActions& operator=(const GestureActions&) = delete;
     bool available(const GestureAction& action, WindowTarget target) const;
     std::expected<void, QString> execute(const GestureAction& action, WindowTarget target,
-                                        quintptr foregroundAtStart);
+                                        quintptr foregroundAtStart, QString* diagnostic = nullptr);
   private:
     bool savedWindowValid() const;
     void forget();

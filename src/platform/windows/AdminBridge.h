@@ -28,6 +28,7 @@ class AdminBridge final : public QObject {
   Q_SIGNALS:
     void changed();
     void failed(const QString& message);
+    void diagnostic(const QString& message);
 
   private:
     struct Impl;

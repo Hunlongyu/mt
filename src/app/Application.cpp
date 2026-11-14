@@ -114,6 +114,7 @@ std::expected<void, QString> Application::start() {
                                                      store_.root());
     admin_ = std::make_unique<AdminBridge>();
     connect(admin_.get(), &AdminBridge::failed, this, &Application::error);
+    connect(admin_.get(), &AdminBridge::diagnostic, this, &Application::trace);
     connect(admin_.get(), &AdminBridge::changed, this, [this] {
         if (settingsDialog_)
             settingsDialog_->setSystemIntegrationStatus(preview_, admin_->status());
@@ -196,6 +197,7 @@ std::expected<void, QString> Application::start() {
                QApplication::activePopupWidget() || QApplication::activeModalWidget();
     });
     connect(gestures_.get(), &GestureController::failed, this, &Application::error);
+    connect(gestures_.get(), &GestureController::diagnostic, this, &Application::trace);
     gestures_->setAdminBridge(admin_.get());
     if (auto result = gestures_->configure(settings_); !result) {
         settings_.gesturesEnabled = false;

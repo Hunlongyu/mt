@@ -185,8 +185,11 @@ void GestureController::receive(const GestureFrame& frame) {
             if (!result)
                 Q_EMIT failed(result.error());
         });
-    } else if (auto result = actions_.execute(*match, frame.target, frame.foregroundAtStart);
-               !result)
-        Q_EMIT failed(result.error());
+    } else {
+        QString detail;
+        const auto result = actions_.execute(*match, frame.target, frame.foregroundAtStart, &detail);
+        if (!detail.isEmpty()) Q_EMIT diagnostic(detail);
+        if (!result) Q_EMIT failed(result.error());
+    }
 }
 }

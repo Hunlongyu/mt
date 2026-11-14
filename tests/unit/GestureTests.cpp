@@ -71,7 +71,7 @@ int colorPixels(const QImage& image, QColor color) {
 class GestureTarget final : public QWidget {
     std::unique_ptr<QWidget> secondary_;
   public:
-    int downs = 0, ups = 0, actions = 0, contexts = 0, refreshes = 0, deletes = 0;
+    int downs = 0, ups = 0, actions = 0, contexts = 0, refreshes = 0, deletes = 0, tabCloses = 0;
     GestureTarget(QWidget* parent = nullptr, Qt::WindowFlags flags = {}) : QWidget(parent, flags) {
         setWindowTitle(QStringLiteral("mt gesture test target")); resize(720, 440);
     }
@@ -83,7 +83,7 @@ class GestureTarget final : public QWidget {
         if (msg->message == WM_APP + 71) {
             *result = msg->wParam == 1 ? downs : msg->wParam == 2 ? ups :
                       msg->wParam == 3 ? actions : msg->wParam == 5 ? refreshes :
-                      msg->wParam == 6 ? deletes : contexts;
+                      msg->wParam == 6 ? deletes : msg->wParam == 7 ? tabCloses : contexts;
             return true;
         }
         if (msg->message == WM_APP + 72) {
@@ -99,11 +99,31 @@ class GestureTarget final : public QWidget {
             *result = 1;
             return true;
         }
+        if (msg->message == WM_APP + 74) {
+            // Let the caller request activation while this independent input
+            // queue is busy. No input is sent to a real application.
+            std::cout << "activation-delayed" << std::endl;
+            Sleep(DWORD(msg->wParam));
+            *result = 1;
+            return true;
+        }
+        if (msg->message == WM_APP + 75) {
+            INPUT input[2]{};
+            for (auto& event : input) {
+                event.type = INPUT_KEYBOARD;
+                event.ki.wVk = VK_F24;
+                event.ki.dwExtraInfo = ownInputTag;
+            }
+            input[1].ki.dwFlags = KEYEVENTF_KEYUP;
+            *result = SendInput(2, input, sizeof(INPUT));
+            return true;
+        }
         return false;
     }
     void keyPressEvent(QKeyEvent* event) override {
         if (event->key() == Qt::Key_F5) ++refreshes;
         if (event->key() == Qt::Key_Delete) ++deletes;
+        if (event->key() == Qt::Key_W && event->modifiers() == Qt::ControlModifier) ++tabCloses;
         if (event->key() == Qt::Key_F6 && event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier))
             ++actions;
     }
@@ -395,6 +415,182 @@ class GestureTests final : public QObject {
         QCOMPARE(GestureAction::parse(QStringLiteral("key:Alt+Left"))->label(), tx(u"后退"));
         QCOMPARE(GestureAction::parse(QStringLiteral("key:Ctrl+W"))->label(), tx(u"关闭标签页"));
         QCOMPARE(GestureAction::parse(QStringLiteral("cmd:toggle_maximize"))->label(), tx(u"最大化/还原"));
+    }
+    void keyboardActionWaitsForTargetActivation_data() {
+        QTest::addColumn<int>("delay");
+        QTest::addColumn<bool>("succeeds");
+        QTest::newRow("activation-pending") << 60 << true;
+        QTest::newRow("activation-timeout") << 350 << false;
+    }
+    void keyboardActionOnInactiveWindowWithoutForegroundPermission_data() {
+        QTest::addColumn<int>("delay");
+        QTest::addColumn<bool>("staleForeground");
+        QTest::newRow("inactive-target") << 0 << false;
+        QTest::newRow("inactive-target-timeout") << 350 << false;
+        QTest::newRow("foreground-changed-before-execution") << 0 << true;
+    }
+    void keyboardActionOnInactiveWindowWithoutForegroundPermission() {
+        if (!qEnvironmentVariableIsSet("MT_GESTURE_DESKTOP_TEST"))
+            QSKIP("Opt-in Windows input test, isolated target processes only");
+        QFETCH(int, delay);
+        QFETCH(bool, staleForeground);
+        const auto previous = GetForegroundWindow();
+        struct RestoreForeground {
+            HWND window;
+            ~RestoreForeground() { if (IsWindow(window)) SetForegroundWindow(window); }
+        } restore{previous};
+        QProcess foregroundProcess, targetProcess;
+        struct CloseProcesses {
+            QProcess& first; QProcess& second;
+            ~CloseProcesses() {
+                for (auto* process : {&first, &second}) {
+                    if (process->state() != QProcess::NotRunning) {
+                        process->terminate();
+                        if (!process->waitForFinished(2000)) { process->kill(); process->waitForFinished(); }
+                    }
+                }
+            }
+        } close{foregroundProcess, targetProcess};
+        const auto start = [](QProcess& process) -> HWND {
+            process.setProgram(QCoreApplication::applicationFilePath());
+            process.setArguments({QStringLiteral("--gesture-target"), QStringLiteral("--no-activate")});
+            process.start();
+            if (!process.waitForStarted() || !process.waitForReadyRead(5000)) return nullptr;
+            bool ok = false;
+            const auto handle = process.readLine().trimmed().toULongLong(&ok, 16);
+            return ok ? reinterpret_cast<HWND>(quintptr(handle)) : nullptr;
+        };
+        const auto foreground = start(foregroundProcess);
+        const auto window = start(targetProcess);
+        QVERIFY(foreground && window);
+        QWidget seed;
+        seed.resize(200, 100);
+        seed.show();
+        const auto seedWindow = reinterpret_cast<HWND>(seed.winId());
+        const auto oldForegroundThread = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
+        const bool attached = oldForegroundThread && oldForegroundThread != GetCurrentThreadId() &&
+            AttachThreadInput(GetCurrentThreadId(), oldForegroundThread, TRUE);
+        SetForegroundWindow(seedWindow);
+        if (attached) AttachThreadInput(GetCurrentThreadId(), oldForegroundThread, FALSE);
+        QTRY_COMPARE(GetForegroundWindow(), seedWindow);
+        // Establish the setup window's activation permission, then hand input
+        // generation to a DIFFERENT process. Injecting from this test itself
+        // would incorrectly leave this executor with activation permission.
+        INPUT input[2]{};
+        for (auto& event : input) {
+            event.type = INPUT_KEYBOARD;
+            event.ki.wVk = VK_F24;
+            event.ki.dwExtraInfo = ownInputTag;
+        }
+        input[1].ki.dwFlags = KEYEVENTF_KEYUP;
+        QCOMPARE(SendInput(2, input, sizeof(INPUT)), 2u);
+        QTest::qWait(30);
+        QVERIFY(SetForegroundWindow(foreground));
+        QTRY_COMPARE(GetForegroundWindow(), foreground);
+        DWORD_PTR delivered = 0;
+        QVERIFY(SendMessageTimeoutW(foreground, WM_APP + 75, 0, 0, SMTO_ABORTIFHUNG, 1000, &delivered));
+        QCOMPARE(delivered, DWORD_PTR(2));
+        QTest::qWait(50);
+        QCOMPARE(GetForegroundWindow(), foreground);
+        QVERIFY(!AllowSetForegroundWindow(GetCurrentProcessId()));
+        auto target = DesktopServices::windowTarget(quintptr(window));
+        target.focusedControl = 0;
+        if (delay) {
+            QVERIFY(PostMessageW(window, WM_APP + 74, WPARAM(delay), 0));
+            QVERIFY(targetProcess.waitForReadyRead(2000));
+            QCOMPARE(targetProcess.readLine().trimmed(), QByteArray("activation-delayed"));
+        }
+        GestureActions actions;
+        const auto action = GestureAction::parse(QStringLiteral("key:Ctrl+W"));
+        QVERIFY(action);
+        QString diagnostic;
+        POINT pointerBefore{}, pointerAfter{};
+        QVERIFY(GetCursorPos(&pointerBefore));
+        const auto result = actions.execute(*action, target, quintptr(staleForeground ? seedWindow : foreground), &diagnostic);
+        QVERIFY(GetCursorPos(&pointerAfter));
+        QCOMPARE(QPoint(pointerAfter.x, pointerAfter.y), QPoint(pointerBefore.x, pointerBefore.y));
+        const bool succeeds = !delay && !staleForeground;
+        QVERIFY2(result.has_value() == succeeds, qPrintable(diagnostic));
+        if (succeeds) QVERIFY(diagnostic.contains(QStringLiteral("input_claim=zero_move")));
+        if (staleForeground) QCOMPARE(GetForegroundWindow(), foreground);
+        QTest::qWait(delay + 50);
+        DWORD_PTR tabCloses = 0;
+        QVERIFY(SendMessageTimeoutW(window, WM_APP + 71, 7, 0, SMTO_ABORTIFHUNG, 1000, &tabCloses));
+        QCOMPARE(tabCloses, succeeds ? DWORD_PTR(1) : DWORD_PTR(0));
+        QVERIFY(SendMessageTimeoutW(foreground, WM_APP + 71, 7, 0, SMTO_ABORTIFHUNG, 1000, &tabCloses));
+        QCOMPARE(tabCloses, DWORD_PTR(0));
+        for (const auto fixture : {foreground, window})
+            for (const int count : {1, 2, 4}) {
+                DWORD_PTR clicks = 0;
+                QVERIFY(SendMessageTimeoutW(fixture, WM_APP + 71, WPARAM(count), 0, SMTO_ABORTIFHUNG, 1000, &clicks));
+                QCOMPARE(clicks, DWORD_PTR(0));
+            }
+    }
+    void keyboardActionWaitsForTargetActivation() {
+        if (!qEnvironmentVariableIsSet("MT_GESTURE_DESKTOP_TEST"))
+            QSKIP("Opt-in Windows input test, isolated target process only");
+        QFETCH(int, delay);
+        QFETCH(bool, succeeds);
+        const auto previous = GetForegroundWindow();
+        struct RestoreForeground {
+            HWND window;
+            ~RestoreForeground() { if (IsWindow(window)) SetForegroundWindow(window); }
+        } restore{previous};
+        QProcess process;
+        process.setProgram(QCoreApplication::applicationFilePath());
+        process.setArguments({QStringLiteral("--gesture-target"), QStringLiteral("--no-activate")});
+        process.start();
+        QVERIFY(process.waitForStarted());
+        QVERIFY(process.waitForReadyRead(5000));
+        bool ok = false;
+        const auto window = reinterpret_cast<HWND>(quintptr(process.readLine().trimmed().toULongLong(&ok, 16)));
+        QVERIFY(ok && IsWindow(window));
+        struct CloseTarget {
+            QProcess& process; HWND window;
+            ~CloseTarget() {
+                PostMessageW(window, WM_CLOSE, 0, 0);
+                if (!process.waitForFinished(2000)) { process.kill(); process.waitForFinished(); }
+            }
+        } close{process, window};
+        QWidget foreground;
+        foreground.setWindowTitle(QStringLiteral("mt isolated gesture foreground"));
+        foreground.resize(200, 100);
+        foreground.show();
+        const auto current = reinterpret_cast<HWND>(foreground.winId());
+        const auto foregroundThread = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
+        const bool attached = foregroundThread && foregroundThread != GetCurrentThreadId() &&
+            AttachThreadInput(GetCurrentThreadId(), foregroundThread, TRUE);
+        SetForegroundWindow(current);
+        if (attached) AttachThreadInput(GetCurrentThreadId(), foregroundThread, FALSE);
+        QTRY_COMPARE(GetForegroundWindow(), current);
+        INPUT permissionInput[2]{};
+        for (auto& event : permissionInput) {
+            event.type = INPUT_KEYBOARD;
+            event.ki.wVk = VK_F24;
+            event.ki.dwExtraInfo = ownInputTag;
+        }
+        permissionInput[1].ki.dwFlags = KEYEVENTF_KEYUP;
+        QCOMPARE(SendInput(2, permissionInput, sizeof(INPUT)), 2u);
+        QTest::qWait(30);
+        QCOMPARE(GetForegroundWindow(), current);
+        auto target = DesktopServices::windowTarget(quintptr(window));
+        target.focusedControl = 0;
+        QVERIFY(PostMessageW(window, WM_APP + 74, WPARAM(delay), 0));
+        QVERIFY(process.waitForReadyRead(2000));
+        QCOMPARE(process.readLine().trimmed(), QByteArray("activation-delayed"));
+        QCOMPARE(GetForegroundWindow(), current);
+        GestureActions actions;
+        const auto action = GestureAction::parse(QStringLiteral("key:Ctrl+W"));
+        QVERIFY(action);
+        QString diagnostic;
+        const auto result = actions.execute(*action, target, quintptr(current), &diagnostic);
+        QTest::qWait(delay + 50);
+        QVERIFY2(bool(result) == succeeds, result ? "Unexpected execution" : qPrintable(result.error()));
+        if (succeeds) QVERIFY(diagnostic.isEmpty());
+        else QVERIFY2(diagnostic.contains(QStringLiteral("stage=confirmation_timeout_or_exit")), qPrintable(diagnostic));
+        DWORD_PTR tabCloses = 0;
+        QVERIFY(SendMessageTimeoutW(window, WM_APP + 71, 7, 0, SMTO_ABORTIFHUNG, 1000, &tabCloses));
+        QCOMPARE(tabCloses, succeeds ? DWORD_PTR(1) : DWORD_PTR(0));
     }
     void launcherWindowGestures_data() {
         QTest::addColumn<bool>("adminConnected");
@@ -939,7 +1135,10 @@ int main(int argc, char** argv) {
     }
     if (app.arguments().contains(QStringLiteral("--gesture-target"))) {
         GestureTarget target;
-        target.move(120, 120); target.show(); target.activateWindow();
+        const bool activate = !app.arguments().contains(QStringLiteral("--no-activate"));
+        target.setAttribute(Qt::WA_ShowWithoutActivating, !activate);
+        target.move(120, 120); target.show();
+        if (activate) target.activateWindow();
         std::cout << std::hex << quintptr(target.winId()) << std::endl;
         app.setQuitOnLastWindowClosed(true);
         return app.exec();

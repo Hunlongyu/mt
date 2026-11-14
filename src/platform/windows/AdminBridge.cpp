@@ -215,6 +215,8 @@ struct AdminBridge::Impl {
                         context = nullptr;
                         requestId.clear();
                         const bool ok = response.value(QStringLiteral("ok")).toBool();
+                        const auto detail = response.value(QStringLiteral("diagnostic")).toString();
+                        if (!detail.isEmpty()) Q_EMIT q->diagnostic(detail);
                         if (receiver)
                             done(ok ? std::expected<void, QString>{}
                                     : std::unexpected(
@@ -253,7 +255,17 @@ struct AdminBridge::Impl {
         payload.insert(QStringLiteral("deadline"), QString::number(GetTickCount64() + 300));
         completion = std::move(done);
         context = receiver;
-        AllowSetForegroundWindow(childPid);
+        SetLastError(ERROR_SUCCESS);
+        const bool foregroundGranted = AllowSetForegroundWindow(childPid);
+        const auto foregroundError = GetLastError();
+        if (payload.value(QStringLiteral("op")).toString() == QStringLiteral("gesture")) {
+            const auto target = targetFrom(payload.value(QStringLiteral("target")).toObject());
+            Q_EMIT q->diagnostic(QStringLiteral("gesture admin request id=%1 action=%2 parent_pid=%3 helper_pid=%4 target_hwnd=0x%5 target_pid=%6 foreground=0x%7 foreground_granted=%8 grant_error=%9")
+                .arg(requestId, payload.value(QStringLiteral("action")).toString())
+                .arg(GetCurrentProcessId()).arg(childPid).arg(target.handle, 0, 16)
+                .arg(target.processId).arg(quintptr(GetForegroundWindow()), 0, 16)
+                .arg(foregroundGranted).arg(foregroundError));
+        }
         send(socket, payload);
         deadline.start(2000);
     }
@@ -452,6 +464,7 @@ int runAdminHelper(const QString& pipe, quint32 parent, quint64 creation, bool p
                 if (id.size() != 36 || expiry < lease || expiry - lease > 500)
                     return false;
                 std::expected<void, QString> result;
+                QString diagnostic;
                 const auto target = targetFrom(request.value(QStringLiteral("target")).toObject());
                 if (WaitForSingleObject(owner.get(), 0) != WAIT_TIMEOUT)
                     return false;
@@ -481,7 +494,7 @@ int runAdminHelper(const QString& pipe, quint32 parent, quint64 creation, bool p
                             actions.execute(*action, target,
                                             quintptr(request.value(QStringLiteral("foreground"))
                                                          .toString()
-                                                         .toULongLong()));
+                                                         .toULongLong()), &diagnostic);
                 } else
                     return false;
                 if (operation == QStringLiteral("click")) {
@@ -492,6 +505,7 @@ int runAdminHelper(const QString& pipe, quint32 parent, quint64 creation, bool p
                 } else
                     send(&socket, {{QStringLiteral("id"), id},
                                    {QStringLiteral("ok"), bool(result)},
+                                   {QStringLiteral("diagnostic"), diagnostic},
                                    {QStringLiteral("error"), result ? QString{} : result.error()}});
                 return true;
             });

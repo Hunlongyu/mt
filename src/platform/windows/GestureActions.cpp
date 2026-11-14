@@ -28,8 +28,68 @@ bool gestureForeground(WindowTarget target) {
     const auto expected = reinterpret_cast<HWND>(target.handle);
     return foreground == expected || GetAncestor(foreground, GA_ROOTOWNER) == expected;
 }
-bool activateGestureTarget(WindowTarget target) {
-    return gestureForeground(target) || (DesktopServices::activate(target) && gestureForeground(target));
+QString describeGestureWindow(HWND window) {
+    const auto target = DesktopServices::windowTarget(quintptr(window));
+    wchar_t name[128]{};
+    GetClassNameW(window, name, int(std::size(name)));
+    return QStringLiteral("hwnd=0x%1,pid=%2,process=%3,class=%4,visible=%5,enabled=%6")
+        .arg(quintptr(window), 0, 16).arg(target.processId)
+        .arg(DesktopServices::processName(target), QString::fromWCharArray(name))
+        .arg(bool(IsWindowVisible(window))).arg(bool(IsWindowEnabled(window)));
+}
+bool claimGestureInput() {
+    // The swallowed trigger never reaches a window's input queue. Give the
+    // gesture executor an input turn without clicking, typing, or moving the
+    // pointer. Our hooks ignore the tagged event; no input queues are attached.
+    INPUT input{};
+    input.type = INPUT_MOUSE;
+    input.mi.dwFlags = MOUSEEVENTF_MOVE;
+    input.mi.dwExtraInfo = ownInputTag;
+    return SendInput(1, &input, sizeof(INPUT)) == 1;
+}
+bool activateGestureTarget(WindowTarget target, QString* diagnostic) {
+    const auto began = GetTickCount64();
+    const auto before = GetForegroundWindow();
+    bool claimedInput = false;
+    const auto success = [&] {
+        if (diagnostic && claimedInput)
+            *diagnostic = QStringLiteral("gesture activation confirmed input_claim=zero_move executor_pid=%1 elapsed_ms=%2 target={%3}")
+                .arg(GetCurrentProcessId()).arg(GetTickCount64() - began)
+                .arg(describeGestureWindow(reinterpret_cast<HWND>(target.handle)));
+        return true;
+    };
+    const auto fail = [&](const QString& stage, DWORD error) {
+        if (diagnostic) {
+            const auto after = GetForegroundWindow();
+            *diagnostic = QStringLiteral("gesture activation failed stage=%1 executor_pid=%2 elapsed_ms=%3 native_error=%4 target_valid=%5 target={%6} before={%7} after={%8}")
+                .arg(stage).arg(GetCurrentProcessId()).arg(GetTickCount64() - began).arg(error)
+                .arg(DesktopServices::validTarget(target))
+                .arg(describeGestureWindow(reinterpret_cast<HWND>(target.handle)),
+                     describeGestureWindow(before), describeGestureWindow(after));
+        }
+        return false;
+    };
+    if (gestureForeground(target)) return true;
+    SetLastError(ERROR_SUCCESS);
+    if (!DesktopServices::activate(target)) {
+        if (gestureForeground(target)) return true;
+        if (GetForegroundWindow() != before || !DesktopServices::validTarget(target) ||
+            !DesktopServices::modifiersReleased() || !claimGestureInput())
+            return fail(QStringLiteral("input_claim_rejected"), GetLastError());
+        claimedInput = true;
+        if (GetForegroundWindow() != before || !DesktopServices::activate(target))
+            return fail(QStringLiteral("request_rejected"), GetLastError());
+    }
+    if (gestureForeground(target)) return success();
+    // Cross-process activation is queued on the target's input thread.
+    // SetForegroundWindow succeeding does not mean it has handled activation
+    // yet. Wait outside the input hook, with a strict bound and no event loop,
+    // then recheck identity/foreground before sending any keys.
+    const auto window = reinterpret_cast<HWND>(target.handle);
+    if (!SendMessageTimeoutW(window, WM_NULL, 0, 0,
+                             SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT, 100, nullptr))
+        return fail(QStringLiteral("confirmation_timeout_or_exit"), GetLastError());
+    return gestureForeground(target) ? success() : fail(QStringLiteral("foreground_mismatch"), ERROR_SUCCESS);
 }
 WORD virtualKey(int key) {
     if ((key >= Qt::Key_A && key <= Qt::Key_Z) || (key >= Qt::Key_0 && key <= Qt::Key_9))
@@ -109,7 +169,8 @@ bool GestureActions::available(const GestureAction& action, WindowTarget target)
     return action.value != QStringLiteral("minimize") && action.value != QStringLiteral("close_window");
 }
 std::expected<void, QString> GestureActions::execute(const GestureAction& action, WindowTarget target,
-                                                   quintptr foregroundAtStart) {
+                                                   quintptr foregroundAtStart, QString* diagnostic) {
+    if (diagnostic) diagnostic->clear();
     if (!DesktopServices::validTarget(target) ||
         reinterpret_cast<quintptr>(GetForegroundWindow()) != foregroundAtStart)
         return std::unexpected(tx(u"目标窗口已改变，手势已取消"));
@@ -128,8 +189,8 @@ std::expected<void, QString> GestureActions::execute(const GestureAction& action
         if (mods & Qt::ShiftModifier) keys.push_back(VK_SHIFT);
         if (mods & Qt::MetaModifier) keys.push_back(VK_LWIN);
         keys.push_back(virtualKey(key.key()));
-        if (!activateGestureTarget(target))
-            return std::unexpected(tx(u"目标窗口已改变，手势已取消"));
+        if (!activateGestureTarget(target, diagnostic))
+            return std::unexpected(tx(u"无法激活目标窗口，手势已取消"));
         return sendChord(target, keys);
     }
     const auto& command = action.value;
@@ -149,8 +210,8 @@ std::expected<void, QString> GestureActions::execute(const GestureAction& action
         return {};
     }
     if (!restoreCommand(command) && command != QStringLiteral("minimize") &&
-        command != QStringLiteral("close_window") && !activateGestureTarget(target))
-        return std::unexpected(tx(u"目标窗口已改变，手势已取消"));
+        command != QStringLiteral("close_window") && !activateGestureTarget(target, diagnostic))
+        return std::unexpected(tx(u"无法激活目标窗口，手势已取消"));
     if (command == QStringLiteral("scroll_top")) return sendChord(target, {VK_CONTROL, VK_HOME});
     if (command == QStringLiteral("scroll_bottom")) return sendChord(target, {VK_CONTROL, VK_END});
     if (command == QStringLiteral("copy")) return sendChord(target, {VK_CONTROL, 'C'});

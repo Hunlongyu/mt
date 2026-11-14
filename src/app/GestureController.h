@@ -28,6 +28,7 @@ class GestureController final : public QObject {
     }
   Q_SIGNALS:
     void failed(const QString& message);
+    void diagnostic(const QString& message);
     void recognized(const QString& directions, const QString& action);
   private:
     bool eventFilter(QObject*, QEvent*) override;
